@@ -1,19 +1,34 @@
 # Kalle Paint - Controls and User Interface
 
-Kalle Paint operates across three distinct modes to work around the limitations of the NES hardware. The user can cycle through these modes at any time by pressing the **Select** button.
+Kalle Paint operates across four distinct modes to work around the limitations of the NES hardware. The user can switch between drawing and editing modes using the **Select** and **Start** buttons.
 
-## 1. Paint Mode
+## The Mode Cycle (Select Button)
+Pressing **Select** cycles through the three primary canvas-related modes:
+1.  **Paint Mode (Small Brush)**: Standard 1x1 drawing.
+2.  **Paint Mode (Large Brush)**: 2x2 block drawing.
+3.  **Attribute Edit Mode**: Change subpalettes for 16x16 quadrants.
 
-The program starts in Paint Mode. This is the primary mode for drawing on the canvas. The cursor visually reflects the currently selected brush size and paint color.
+*(Pressing Select in Attribute Mode returns you to Small Brush Paint Mode).*
+
+---
+
+## The Palette Editor (Start Button)
+Pressing **Start** in any of the above modes will open the **Palette Editor**. Pressing **Start** again while inside the editor will return you to **Small Brush Paint Mode**.
+
+---
+
+## 1. Paint Modes (Small & Large Brush)
+
+These modes are used for drawing on the canvas. The cursor visually reflects the currently selected brush size and paint color.
 
 ### Controls:
 *   **D-Pad (Up/Down/Left/Right):** Move the cursor. Holding a direction will move the cursor repeatedly.
-*   **Start:** Toggle brush size between small (1x1 paint pixel) and large (2x2 paint pixels).
 *   **B Button:** Cycle through the 4 colors of the currently active subpalette (Color 0 -> 1 -> 2 -> 3 -> 0).
 *   **A Button:** Paint at the cursor's location using the selected color and brush size.
-*   **Select:** Switch to Attribute Edit Mode.
+*   **Select:** Cycle the mode (Small Brush &rarr; Large Brush &rarr; Attribute Editor).
+*   **Start:** Open the **Palette Editor**.
 
-*Note: The cursor becomes invisible if it is hovering over a pixel of the exact same color. To move long distances faster, switch to the large brush.*
+*Note: The cursor becomes invisible if it is hovering over a pixel of the exact same color. To move long distances faster, switch to the Large Brush mode via Select.*
 
 ---
 
@@ -27,7 +42,8 @@ In this mode, the cursor changes into a large, blinking 16x16 pixel square that 
 *   **D-Pad (Up/Down/Left/Right):** Move the attribute cursor (snaps to 16x16 pixel quadrants).
 *   **B Button:** Decrement the subpalette assigned to the highlighted square.
 *   **A Button:** Increment the subpalette assigned to the highlighted square (Subpalette 0 <-> 1 <-> 2 <-> 3).
-*   **Select:** Switch to Palette Edit Mode.
+*   **Select:** Switch back to Paint Mode (Small Brush).
+*   **Start:** Open the **Palette Editor**.
 
 *Note: The first color (Color 0) of every subpalette is shared across the entire screen. Changing the subpalette of a square will have no visible effect on pixels drawn with that shared background color.*
 
@@ -45,9 +61,9 @@ This mode brings up a small black window at the bottom right corner of the scree
 
 ### Controls:
 *   **D-Pad (Up/Down):** Move the cursor to select a different color within the current subpalette to edit.
-*   **Start:** Cycle to the next subpalette (Subpalette 0 -> 1 -> 2 -> 3 -> 0).
+*   **Select:** Cycle to the next subpalette (Subpalette 0 -> 1 -> 2 -> 3 -> 0).
 *   **D-Pad (Left/Right):** Decrement/Increment the "ones" digit of the NES color number (changes hue).
 *   **B / A Buttons:** Decrement/Increment the "sixteens" digit of the NES color number (changes brightness).
-*   **Select:** Switch back to Paint Mode.
+*   **Start:** Exit the editor and return to Paint Mode (Small Brush).
 
 *Note: Because the top-most color in the list is shared across all subpalettes, editing it will change that background color everywhere on the screen simultaneously.*

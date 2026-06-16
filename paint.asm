@@ -11,7 +11,7 @@ vram_buf_val  equ $20    ; VRAM buffer - values (16 bytes)
 user_palette     equ $30    ; user palette (16 bytes; each $00-$3f; offsets 4/8/12 are unused)
 vram_offset    equ $40    ; offset to name/attr table 0 and vram_copy (2 bytes, low first; 0-$3ff)
 vram_copy_addr equ $42    ; address in vram_copy (2 bytes, low first; vram_copy...vram_copy+$3ff)
-mode        equ $44    ; program mode: 0 = paint, 1 = attribute editor, 2 = palette editor
+mode        equ $44    ; program mode: 0=sm brush, 1=lg brush, 2=attr edit, 3=pal edit
 runmain     equ $45    ; run main loop? (flag; only MSB is important)
 pad_status   equ $46    ; first joypad status (bits: A, B, select, start, up, down, left, right)
 prev_pad_status equ $47    ; first joypad status on previous frame
@@ -25,6 +25,7 @@ cursor_y     equ $4e    ; cursor Y position (paint/attribute edit mode; 0-55)
 blink_timer  equ $4f    ; cursor blink timer (attribute/palette editor)
 pal_edit_cursor_pos equ $50    ; cursor position (palette editor; 0-3)
 pal_edit_subpal equ $51    ; selected subpalette (palette editor; 0-3)
+prev_mode   equ $52    ; previous mode (to return to after palette editor)
 sprite_data     equ $0200  ; $100 bytes (see init_sprite_data for layout)
 vram_copy    equ $0300  ; $400 bytes (copy of name/attribute table 0; must be at $xx00)
 
@@ -155,6 +156,9 @@ reset       ; initialize the NES; see https://wiki.nesdev.org/w/index.php/Init_c
             sta cursor_x
             lda #26
             sta cursor_y
+            lda #0
+            sta mode
+            sta brush_size
             inc paint_color
 
             wait_vblank
@@ -290,8 +294,8 @@ jump_engine  ldx mode           ; jump engine (run one sub depending on program 
             pha
             rts                ; pull address, low byte first; jump to that address plus one
 
-jump_table_hi dh paint_mode-1, attr_editor-1, pal_editor-1  ; jump table - high bytes
-jump_table_lo dl paint_mode-1, attr_editor-1, pal_editor-1  ; jump table - low bytes
+jump_table_hi dh paint_mode-1, paint_mode-1, attr_editor-1, pal_editor-1  ; jump table - high bytes
+jump_table_lo dl paint_mode-1, paint_mode-1, attr_editor-1, pal_editor-1  ; jump table - low bytes
 
 ; --- Paint mode (code label prefix "pm") ---------------------------------------------------------
 
@@ -299,9 +303,35 @@ paint_mode   lda prev_pad_status  ; select/B/start logic
             and #(pad_select|pad_b|pad_start)
             bne pm_arrows     ; if any pressed on previous frame, ignore them all
 
-            lda pad_status    ; if select pressed, switch to attribute editor
+            lda pad_status    ; if start pressed, switch to palette editor
+            and #pad_start
+            beq +
+            lda mode          ; save current mode
+            sta prev_mode
+            lda #3           ; mode 3 = palette editor
+            sta mode
+            lda #$ff         ; hide paint cursor sprite
+            sta sprite_data+0+0
+            ldx #(5*4)       ; show palette editor sprites (#5-#23)
+-           lda init_sprite_data,x
+            sta sprite_data,x
+            inx
+            inx
+            inx
+            inx
+            cpx #(24*4)
+            bne -
+            rts              ; return to main loop
+
++           lda pad_status    ; if select pressed, switch to next mode
             and #pad_select
             beq +
+            lda mode          ; check if we are in small or large brush mode
+            beq ++            ; if small (0), go to large (1)
+
+            ; we are in large brush mode (1), switch to attribute editor (2)
+            lda #2           ; mode 2 = attribute editor
+            sta mode
             lda #$ff         ; hide paint cursor sprite
             sta sprite_data+0+0
             lda #%00111100   ; make cursor coordinates a multiple of four
@@ -310,29 +340,25 @@ paint_mode   lda prev_pad_status  ; select/B/start logic
             lda #%00111100
             and cursor_y
             sta cursor_y
-            inc mode         ; change program mode
             rts              ; return to main loop
+
+++          lda #1           ; mode 1 = large brush
+            sta mode
+            sta brush_size
+            lsr cursor_x      ; make coordinates even for large brush
+            asl cursor_x
+            lsr cursor_y
+            asl cursor_y
+            rts
 
 +           lda pad_status    ; if B pressed, increment paint color (0-3)
             and #pad_b
-            beq +
+            beq pm_arrows
             ldx paint_color
             inx
             txa
             and #%00000011
             sta paint_color
-
-+           lda pad_status    ; if start pressed, toggle brush size
-            and #pad_start
-            beq pm_arrows
-            lda brush_size
-            eor #%00000001
-            sta brush_size
-            beq pm_arrows
-            lsr cursor_x      ; if large brush, make coordinates even
-            asl cursor_x      ; note: not allowing the cursor to span multiple tiles makes
-            lsr cursor_y      ; the paint logic a lot simpler
-            asl cursor_y
 
 pm_arrows    lda pad_status    ; arrow logic
             and #(pad_up|pad_down|pad_left|pad_right)
@@ -498,13 +524,18 @@ attr_editor  lda prev_pad_status    ; if any button pressed on previous frame, i
             beq +
             jmp attr_editor_2    ; TODO: code golf to get label within branch range
 
-+           lda pad_status      ; if select pressed, switch to palette editor
-            and #pad_select
++           lda pad_status      ; if start pressed, switch to palette editor
+            and #pad_start
             beq +
-            ldx #(1*4)         ; hide attribute editor sprites (#1-#4)
+            lda mode          ; save current mode
+            sta prev_mode
+            lda #3           ; mode 3 = palette editor
+            sta mode
+            ldx #(1*4)       ; hide attribute editor sprites (#1-#4)
             ldy #4
             jsr hide_sprites    ; X = first byte index, Y = count
--           lda init_sprite_data,x  ; show palette editor sprites (#5-#23)
+            ldx #(5*4)       ; show palette editor sprites (#5-#23)
+-           lda init_sprite_data,x
             sta sprite_data,x
             inx
             inx
@@ -512,7 +543,19 @@ attr_editor  lda prev_pad_status    ; if any button pressed on previous frame, i
             inx
             cpx #(24*4)
             bne -
-            inc mode           ; change program mode
+            rts              ; return to main loop
+
++           lda pad_status      ; if select pressed, switch back to paint mode (small brush)
+            and #pad_select
+            beq +
+            ldx #(1*4)         ; hide attribute editor sprites (#1-#4)
+            ldy #4
+            jsr hide_sprites    ; X = first byte index, Y = count
+            lda #0             ; mode 0 = small brush
+            sta mode
+            sta brush_size
+            lda init_sprite_data+0+0  ; show paint cursor sprite
+            sta sprite_data+0+0
             rts                ; return to main loop
 
 +           lda pad_status        ; if A/B pressed, change attribute block subpalette (bit pair)
@@ -646,31 +689,57 @@ to_vram_buf   pha               ; tell NMI routine to write A to VRAM $2000 + vr
 ; --- Palette editor (code label prefix "pe") -----------------------------------------------------
 
 pal_editor   lda prev_pad_status  ; if any button pressed on previous frame, ignore all
-            bne pal_editor_2
+            beq +
+            jmp pal_editor_2
++           lda pad_status
+            lsr a
+            bcc +
+            jmp pe_inc_1s      ; right
++           lsr a
+            bcc +
+            jmp pe_dec_1s      ; left
++           lsr a
+            bcc +
+            jmp pe_down       ; down
++           lsr a
+            bcc +
+            jmp pe_up         ; up
++           lsr a
+            bcc +
+            jmp pe_exit       ; start
++           lsr a
+            bcc +
+            jmp pe_inc_subpal  ; select
++           lda pad_status
+            and #pad_b
+            beq +
+            jmp pe_dec_16s     ; B
++           lda pad_status
+            and #pad_a
+            beq +
+            jmp pe_inc_16s     ; A
++           jmp pal_editor_2
 
-            lda pad_status
-            lsr a
-            bcs pe_inc_1s      ; right
-            lsr a
-            bcs pe_dec_1s      ; left
-            lsr a
-            bcs pe_down       ; down
-            lsr a
-            bcs pe_up         ; up
-            lsr a
-            bcs pe_inc_subpal  ; start
-            lsr a
-            bcs pe_exit       ; select; ends with rts
-            lsr a
-            bcs pe_dec_16s     ; B
-            bne pe_inc_16s     ; A
-            beq pal_editor_2   ; unconditional
-
-pe_exit      ldx #(5*4)       ; exit palette editor (switch to paint mode)
+pe_exit      ldx #(5*4)       ; exit palette editor (switch to previous mode)
             ldy #19          ; hide palette editor sprites (#5-#23)
             jsr hide_sprites  ; X = first byte index, Y = count
-            lda #0
-            sta mode         ; change program mode
+            lda prev_mode
+            sta mode         ; restore program mode
+            cmp #2           ; if we were in paint mode (0 or 1)
+            bcs +
+            lda init_sprite_data+0+0  ; show paint cursor sprite
+            sta sprite_data+0+0
+            rts
++           ; we were in attribute editor (2)
+            ldx #(1*4)
+-           lda init_sprite_data,x
+            sta sprite_data,x
+            inx
+            inx
+            inx
+            inx
+            cpx #(5*4)
+            bne -
             rts              ; return to main loop
 
 pe_inc_subpal lda pal_edit_subpal  ; increment subpalette (0 -> 1 -> 2 -> 3 -> 0)
