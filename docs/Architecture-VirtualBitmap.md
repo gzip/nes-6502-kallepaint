@@ -32,16 +32,16 @@ For example, tile index `%11 00 00 00` (`$C0`) will be a tile where the top-left
 
 ## 2. Drawing on the Canvas (`paint.asm`)
 
-When the user presses the 'A' button to paint with a small brush, the 6502 assembly code performs the following logic in `paintmode2`:
+When the user presses the 'A' button to paint with a small brush, the 6502 assembly code performs the following logic in `paint_mode_2`:
 
 ### Step A: Identify the Tile and Quadrant
-First, it uses the cursor's screen coordinates to determine which tile is being modified, and retrieves the current tile index (a value from `0` to `255`) from the `vramcopy` shadow RAM.
+First, it uses the cursor's screen coordinates to determine which tile is being modified, and retrieves the current tile index (a value from `0` to `255`) from the `vram_copy` shadow RAM.
 
 Then, it calculates the specific sub-pixel position (0, 1, 2, or 3) within that tile based on the lowest bits of the X and Y coordinates:
 ```assembly
-            lda cursorx          ; pixel position within tile (0-3) -> X
+            lda cursor_x          ; pixel position within tile (0-3) -> X
             lsr a
-            lda cursory
+            lda cursor_y
             rol a
             and #%00000011
             tax
@@ -52,14 +52,14 @@ Because the tile index perfectly encodes the colors of its four quadrants, updat
 
 The code defines two lookup tables:
 ```assembly
-solidtiles  db %00000000, %01010101, %10101010, %11111111  ; solid color 0-3
-pixelmasks  db %11000000, %00110000, %00001100, %00000011  ; masks for quadrants
+solid_tiles  db %00000000, %01010101, %10101010, %11111111  ; solid color 0-3
+pixel_masks  db %11000000, %00110000, %00001100, %00000011  ; masks for quadrants
 ```
 
-1. It takes the `pixelmasks` value for the current quadrant and inverts it (e.g., `%00111111` for quadrant 0).
+1. It takes the `pixel_masks` value for the current quadrant and inverts it (e.g., `%00111111` for quadrant 0).
 2. It uses `AND` to clear out the old color data for that specific quadrant in the original tile index.
-3. It takes the `solidtiles` value matching the user's current paint color (0-3) and `AND`s it with the original `pixelmask` to isolate just the two bits needed.
+3. It takes the `solid_tiles` value matching the user's current paint color (0-3) and `AND`s it with the original `pixelmask` to isolate just the two bits needed.
 4. Finally, it `OR`s these new bits back into the tile index.
 
 ### Step C: Update the Screen
-This newly calculated 8-bit value is precisely the index of the pre-generated tile that shows the new combination of pixels. The code saves this new index back into `vramcopy` and adds it to the VRAM buffer queue, allowing the NMI routine to blast the new tile index to the NES screen on the next frame.
+This newly calculated 8-bit value is precisely the index of the pre-generated tile that shows the new combination of pixels. The code saves this new index back into `vram_copy` and adds it to the VRAM buffer queue, allowing the NMI routine to blast the new tile index to the NES screen on the next frame.

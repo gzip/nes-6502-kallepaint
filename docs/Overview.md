@@ -10,7 +10,7 @@ This is a 6502 assembly paint program designed specifically for the Nintendo Ent
     *   **Modes**: Paint, Attribute Editor, and Palette Editor.
 *   **`paint.asm`**: This is the core engine. It contains the entire application logic written in 6502 assembly. Key features include:
     *   **Main Loop & Input**: Handles controller input and dictates the program flow across its three primary modes: Paint, Attribute Editor, and Palette Editor.
-    *   **Shadow VRAM (`vramcopy`)**: Because reading directly from the NES Video RAM (VRAM) is slow and tricky, the program maintains a shadow copy of the screen (Name Table and Attribute Table) in the CPU's RAM.
+    *   **Shadow VRAM (`vram_copy`)**: Because reading directly from the NES Video RAM (VRAM) is slow and tricky, the program maintains a shadow copy of the screen (Name Table and Attribute Table) in the CPU's RAM.
     *   **NMI Routine**: The Non-Maskable Interrupt routine triggers 60 times a second (during VBlank). It reads a queue of pending graphics updates (a 16-entry VRAM buffer) and blasts those changes to the actual NES PPU.
 
 *   **`chr-background-generate.py`**: This is a crucial piece of the puzzle. It dynamically generates the CHR (graphics) data for the background.
