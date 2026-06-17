@@ -513,6 +513,7 @@ paint_mode_2  ; paint mode, part 2
 update_tile  ldy #0               ; update byte in vram_copy
             sta (vram_copy_addr),y
             jsr to_vram_buf        ; tell NMI routine to update A to VRAM
+            jsr auto_update_attribute ; update attribute for the current 16x16 area
 rts_label    rts                  ; return to main loop
 
 cursortiles db small_cursor_tile, large_cursor_tile                     ; brush size -> cursor tile
@@ -685,6 +686,37 @@ to_vram_buf   pha               ; tell NMI routine to write A to VRAM $2000 + vr
             sta vram_buf_lo,x
             pla
             sta vram_buf_val,x
+            rts
+
+auto_update_attribute
+            jsr attr_vram_offset      ; sets vram_offset and vram_copy_addr
+            jsr attr_bit_pos          ; returns 0/2/4/6 in X
+            
+            inx                       ; X = 1/3/5/7 for 2-bit mask
+            lda bp_change_masks,x
+            eor #%11111111            ; invert to clear bits
+            sta temp
+            
+            ldy #0
+            lda (vram_copy_addr),y    ; get current attribute byte from vram_copy
+            and temp                  ; clear the target quadrant bits
+            sta temp
+            
+            dex                       ; X = 0/2/4/6 for shifting
+            lda active_subpalette     ; get subpalette (0-3)
+            and #%00000011            ; safety
+            cpx #0
+            beq +
+-           asl a
+            asl a                     ; active_subpalette is bits 1-0, shift by 2 each iteration
+            dex
+            dex
+            bne -
++           ora temp                  ; combine with other quadrants
+            
+            ldy #0
+            sta (vram_copy_addr),y    ; update vram_copy
+            jsr to_vram_buf           ; queue VRAM update (uses vram_offset set by attr_vram_offset)
             rts
 
 ; --- Palette editor (code label prefix "pe") -----------------------------------------------------
