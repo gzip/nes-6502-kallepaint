@@ -26,6 +26,7 @@ blink_timer  equ $4f    ; cursor blink timer (attribute/palette editor)
 pal_edit_cursor_pos equ $50    ; cursor position (palette editor; 0-3)
 pal_edit_subpal equ $51    ; selected subpalette (palette editor; 0-3)
 prev_mode   equ $52    ; previous mode (to return to after palette editor)
+active_subpalette equ $53 ; currently active subpalette (1-3)
 sprite_data     equ $0200  ; $100 bytes (see init_sprite_data for layout)
 vram_copy    equ $0300  ; $400 bytes (copy of name/attribute table 0; must be at $xx00)
 
@@ -720,7 +721,11 @@ pal_editor   lda prev_pad_status  ; if any button pressed on previous frame, ign
             jmp pe_inc_16s     ; A
 +           jmp pal_editor_2
 
-pe_exit      ldx #(5*4)       ; exit palette editor (switch to previous mode)
+pe_exit     lda pal_edit_cursor_pos
+            sta paint_color
+            lda pal_edit_subpal
+            sta active_subpalette
+            ldx #(5*4)       ; exit palette editor (switch to previous mode)
             ldy #19          ; hide palette editor sprites (#5-#23)
             jsr hide_sprites  ; X = first byte index, Y = count
             lda prev_mode
