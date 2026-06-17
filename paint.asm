@@ -90,7 +90,13 @@ color_ind_tile  equ $16  ; color indicator (palette editor)
 
 ; misc
 blink_rate   equ 4      ; attribute/palette editor cursor blink rate (0=fastest, 7=slowest)
-brush_delay  equ 2      ; paint cursor move repeat delay (frames)
+das_delay       equ 15     ; frames to wait before auto-repeat kicks in
+nav_delay_sm    equ 2      ; nav repeat delay (sm brush)
+nav_delay_lg    equ 5      ; nav repeat delay (lg brush)
+nav_delay_ae    equ 11     ; nav repeat delay (attr editor)
+draw_delay_sm   equ 5      ; draw repeat delay (sm brush)
+draw_delay_lg   equ 11     ; draw repeat delay (lg brush)
+draw_delay_ae   equ 23     ; draw repeat delay (attr editor)
 v_scroll     equ 0      ; PPU vertical scroll value (VRAM $2000 is at the top of visible area)
 
 ; --- iNES header ---------------------------------------------------------------------------------
@@ -390,15 +396,29 @@ paint_mode   lda prev_pad_status  ; select/B/start logic
 
 pm_arrows    lda pad_status    ; arrow logic
             and #(pad_up|pad_down|pad_left|pad_right)
-            bne +
-            sta delay_left    ; if none pressed, clear cursor move delay
+            beq pm_no_arrows
+            
+            tax               ; save current arrow status
+            lda prev_pad_status
+            and #(pad_up|pad_down|pad_left|pad_right)
+            bne pm_repeat     ; if any arrows were already held, jump to repeat logic
+            
+            ; Fresh press (DAS)
+            lda #das_delay
+            sta delay_left
+            jmp pm_move_cursor
+
+pm_no_arrows sta delay_left    ; if none pressed, clear cursor move delay
             beq paint_mode_2   ; unconditional; ends with rts
-+           lda delay_left    ; else if delay > 0, decrement it and exit
+
+pm_repeat    lda delay_left    ; else if delay > 0, decrement it and exit
             beq +
             dec delay_left
             bpl paint_mode_2   ; unconditional; ends with rts
++           jsr get_dynamic_delay
+            sta delay_left
 
-+           lda pad_status    ; check horizontal arrows
+pm_move_cursor lda pad_status    ; check horizontal arrows
             lsr a
             bcs +
             lsr a
@@ -421,7 +441,7 @@ pm_check_vert lda pad_status    ; check vertical arrows
             bcs +
             lsr a
             bcs ++
-            bcc pm_arrow_end   ; unconditional
+            bcc paint_mode_2   ; unconditional
 +           lda cursor_y      ; down
             sec
             adc brush_size
@@ -437,9 +457,6 @@ pm_check_vert lda pad_status    ; check vertical arrows
             clc
             sbc brush_size
 +++         sta cursor_y      ; store vertical position
-
-pm_arrow_end  lda #brush_delay  ; reinit cursor move delay
-            sta delay_left
 
 paint_mode_2  ; paint mode, part 2
 
@@ -630,14 +647,29 @@ attr_editor  lda prev_pad_status  ; surgical debounce for mode-switching buttons
 
 ae_arrows    lda pad_status    ; arrow logic
             and #(pad_up|pad_down|pad_left|pad_right)
-            bne +
-            sta delay_left    ; if none pressed, clear cursor move delay
+            beq ae_no_arrows
+            
+            tax               ; save current arrow status
+            lda prev_pad_status
+            and #(pad_up|pad_down|pad_left|pad_right)
+            bne ae_repeat     ; if any arrows were already held, jump to repeat logic
+            
+            ; Fresh press (DAS)
+            lda #das_delay
+            sta delay_left
+            jmp ae_move_cursor
+
+ae_no_arrows sta delay_left    ; if none pressed, clear cursor move delay
             beq ae_check_stamp
-+           lda delay_left    ; else if delay > 0, decrement it and exit
+
+ae_repeat    lda delay_left    ; else if delay > 0, decrement it and exit
             beq +
             dec delay_left
             bpl ae_check_stamp
-+           lda pad_status    ; check horizontal arrows
++           jsr get_dynamic_delay
+            sta delay_left
+
+ae_move_cursor lda pad_status    ; check horizontal arrows
             lsr a
             bcs +
             lsr a
@@ -657,7 +689,7 @@ ae_check_vert lda pad_status    ; check vertical arrows
             bcs +
             lsr a
             bcs ++
-            bcc ae_arrow_end  ; unconditional
+            bcc ae_check_stamp  ; unconditional
 +           lda cursor_y      ; down
             adc #(4-1)       ; carry is always set
             cmp #56
@@ -669,9 +701,6 @@ ae_check_vert lda pad_status    ; check vertical arrows
             bpl +++
             lda #(56-4)
 +++         sta cursor_y      ; store vertical position
-
-ae_arrow_end lda #brush_delay  ; reinit cursor move delay
-            sta delay_left
 
 ae_check_stamp lda pad_status   ; if A/B pressed, stamp the active subpalette
             and #(pad_a|pad_b)
@@ -760,6 +789,30 @@ to_vram_buf   pha               ; tell NMI routine to write A to VRAM $2000 + vr
             rts
 +           pla
             rts
+
+get_dynamic_delay
+            lda mode
+            cmp #2
+            beq +
+            ; Paint mode 0 or 1: check if A (draw) is held
+            lda pad_status
+            and #pad_a
+            jmp ++
++           ; Attr editor 2: check if A or B (stamp) is held
+            lda pad_status
+            and #(pad_a|pad_b)
+++          beq +++
+            ; Drawing delay table
+            ldx mode
+            lda draw_delays,x
+            rts
++++         ; Navigation delay table
+            ldx mode
+            lda nav_delays,x
+            rts
+
+nav_delays   db nav_delay_sm, nav_delay_lg, nav_delay_ae
+draw_delays  db draw_delay_sm, draw_delay_lg, draw_delay_ae
 
 auto_update_attribute
             jsr attr_vram_offset      ; sets vram_offset and vram_copy_addr
