@@ -5,7 +5,7 @@
 ; Note: "VRAM buffer" = what to update in VRAM on next VBlank.
 
 ; RAM
-vram_buf_hi   equ $00    ; VRAM buffer - high bytes of addresses (16 bytes; 0 = terminator)
+vram_buf_hi   equ $00    ; VRAM buffer - high bytes of addresses (16 bytes)
 vram_buf_lo   equ $10    ; VRAM buffer - low bytes of addresses (16 bytes)
 vram_buf_val  equ $20    ; VRAM buffer - values (16 bytes)
 user_palette     equ $30    ; user palette (16 bytes; each $00-$3f; offsets 4/8/12 are unused)
@@ -15,7 +15,7 @@ mode        equ $44    ; program mode: 0=sm brush, 1=lg brush, 2=attr edit, 3=pa
 runmain     equ $45    ; run main loop? (flag; only MSB is important)
 pad_status   equ $46    ; first joypad status (bits: A, B, select, start, up, down, left, right)
 prev_pad_status equ $47    ; first joypad status on previous frame
-vram_buf_pos  equ $48    ; position of last byte written to VRAM buffer
+vram_count    equ $48    ; number of entries in VRAM buffer (0-16)
 temp        equ $49    ; temporary
 delay_left   equ $4a    ; cursor move delay left (paint mode)
 brush_size   equ $4b    ; cursor type (paint mode; 0=small, 1=big)
@@ -28,6 +28,7 @@ pal_edit_subpal equ $51    ; selected subpalette (palette editor; 0-3)
 prev_mode   equ $52    ; previous mode (to return to after palette editor)
 active_subpalette equ $53 ; currently active subpalette (1-3)
 vram_ready  equ $54    ; VRAM buffer ready flag (1 = ready for NMI)
+cursor_color_dirty equ $55 ; cursor color needs VRAM update (paint mode)
 sprite_data     equ $0200  ; $100 bytes (see init_sprite_data for layout)
 vram_copy    equ $0300  ; $400 bytes (copy of name/attribute table 0; must be at $xx00)
 ; END RAM
@@ -90,7 +91,7 @@ color_ind_tile  equ $16  ; color indicator (palette editor)
 ; misc
 blink_rate   equ 4      ; attribute/palette editor cursor blink rate (0=fastest, 7=slowest)
 brush_delay  equ 2      ; paint cursor move repeat delay (frames)
-v_scroll     equ 256-8  ; PPU vertical scroll value (VRAM $2000 is at the top of visible area)
+v_scroll     equ 0      ; PPU vertical scroll value (VRAM $2000 is at the top of visible area)
 
 ; --- iNES header ---------------------------------------------------------------------------------
 
@@ -177,6 +178,7 @@ reset       ; initialize the NES; see https://wiki.nesdev.org/w/index.php/Init_c
             lda #1
             sta paint_color
             sta active_subpalette
+            sta cursor_color_dirty
 
             wait_vblank
 
@@ -224,7 +226,7 @@ mainloop    bit runmain      ; the main loop
 
             lda #0
             sta vram_ready
-            sta vram_buf_pos
+            sta vram_count
 
             lda pad_status    ; store previous joypad status
             sta prev_pad_status
@@ -252,15 +254,12 @@ mainloop    bit runmain      ; the main loop
             beq +
             ldx #blinkcol2
 +           stx vram_buf_val+0
-            lda #0               ; store pos of last byte written
-            sta vram_buf_pos
+            lda #1               ; we have one entry (blinking cursor)
+            sta vram_count
 
             inc blink_timer  ; advance timer
             jsr jump_engine  ; run code for the program mode we're in
 
-            ldx vram_buf_pos      ; append terminator to VRAM buffer
-            lda #$00
-            sta vram_buf_hi+1,x
             lda #1               ; signal that buffer is ready for NMI
             sta vram_ready
 
@@ -386,6 +385,8 @@ paint_mode   lda prev_pad_status  ; select/B/start logic
             txa
             and #%00000011
             sta paint_color
+            lda #1
+            sta cursor_color_dirty
 
 pm_arrows    lda pad_status    ; arrow logic
             and #(pad_up|pad_down|pad_left|pad_right)
@@ -450,7 +451,8 @@ paint_mode_2  ; paint mode, part 2
             lda cursor_y        ; Y pos
             asl a
             asl a
-            adc #(8-1)         ; carry is always clear
+            sec
+            sbc #1             ; screen-relative (line 0 = nametable line 0)
             sta sprite_data+0+0
             ldx brush_size      ; tile
             lda cursortiles,x
@@ -477,53 +479,67 @@ paint_mode_2  ; paint mode, part 2
             and #%11111100
             asl a
             asl a
-            adc #(8-1)         ; carry is always clear
+            sec
+            sbc #1             ; screen-relative (line 0 = nametable line 0)
             sta sprite_data+4+0 ; #1 Y
             sta sprite_data+2*4+0 ; #2 Y
             adc #8             ; carry is always clear
             sta sprite_data+3*4+0 ; #3 Y
             sta sprite_data+4*4+0 ; #4 Y
 
-            ; tell NMI routine to update cursor color
-            ldx paint_color       ; color 0 is common to all subpalettes
+            lda cursor_color_dirty
             beq ++
+            ldx paint_color       ; color 0 is common to all subpalettes
+            beq +
             lda active_subpalette
             asl a
             asl a
             ora paint_color
             tax
-++          lda user_palette,x        ; cursor color -> A
++           lda user_palette,x        ; cursor color -> A
             pha                  ; append to VRAM buffer
-            inc vram_buf_pos
-            ldx vram_buf_pos
+            ldx vram_count
+            cpx #16
+            bcs +
             lda #$3f
             sta vram_buf_hi,x
             lda #$17             ; palette 1 color 3
             sta vram_buf_lo,x
             pla
             sta vram_buf_val,x
-
-            lda pad_status  ; if A not pressed, we are done
+            inc vram_count
+            lda #0
+            sta cursor_color_dirty
+            jmp ++
++           pla
+++          lda pad_status  ; if A not pressed, we are done
             and #pad_a
             beq rts_label
 
             ; edit one byte (tile) in vram_copy and tell NMI routine to update it to VRAM
 
-            lda cursor_y     ; compute offset to vram_copy and VRAM $2000;
-            lsr a           ; bits: cursor_y = 00ABCDEF, cursor_x = 00abcdef,
-            pha             ; -> vram_offset = 000000AB CDEabcde
+            ; compute offset to vram_copy and VRAM $2000;
+            ; bits: cursor_y = 00ABCDEF, cursor_x = 00abcdef,
+            ; -> vram_offset = 000000AB CDEabcde
+            lda cursor_y
+            lsr a           ; A = 00ABCDE (Tile Y)
+            sta temp
             lsr a
             lsr a
-            lsr a
+            lsr a           ; A = 000000AB
             sta vram_offset+1
-            pla
-            and #%00000111
-            lsr a
-            ror a
-            ror a
-            ora cursor_x
-            ror a
-            sta vram_offset+0
+            lda temp
+            and #%00000111  ; A = 00000CDE
+            asl a
+            asl a
+            asl a
+            asl a
+            asl a           ; A = CDE00000
+            sta temp
+            lda cursor_x
+            lsr a           ; A = 00abcde
+            ora temp
+            sta vram_offset+0 ; vram_offset+0 = CDEabcde
 
             jsr get_vram_copy_addr  ; get vram_copy_addr
             lda brush_size
@@ -678,10 +694,12 @@ attr_editor_2 lda #attr_cursor_tile
             lda cursor_y        ; update cursor sprite Y
             asl a
             asl a
-            adc #(8-1)         ; carry is always clear
+            sec
+            sbc #1             ; screen-relative (line 0 = nametable line 0)
             sta sprite_data+4+0
             sta sprite_data+2*4+0
-            adc #8             ; carry is always clear
+            clc
+            adc #8             ; ensure perfect 8-pixel alignment
             sta sprite_data+3*4+0
             sta sprite_data+4*4+0
             rts                ; return to main loop
@@ -728,8 +746,9 @@ get_vram_copy_addr lda vram_offset+0     ; get address within vram_copy
             rts
 
 to_vram_buf   pha               ; tell NMI routine to write A to VRAM $2000 + vram_offset
-            inc vram_buf_pos
-            ldx vram_buf_pos
+            ldx vram_count
+            cpx #16
+            bcs +
             lda #$20
             ora vram_offset+1
             sta vram_buf_hi,x
@@ -737,6 +756,9 @@ to_vram_buf   pha               ; tell NMI routine to write A to VRAM $2000 + vr
             sta vram_buf_lo,x
             pla
             sta vram_buf_val,x
+            inc vram_count
+            rts
++           pla
             rts
 
 auto_update_attribute
@@ -808,6 +830,8 @@ pe_exit     lda pal_edit_cursor_pos
             sta paint_color
             lda pal_edit_subpal
             sta active_subpalette
+            lda #1
+            sta cursor_color_dirty
             ldx #(5*4)       ; exit palette editor (switch to previous mode)
             ldy #19          ; hide palette editor sprites (#5-#23)
             jsr hide_sprites  ; X = first byte index, Y = count
@@ -908,48 +932,53 @@ pal_editor_2  lda pal_edit_subpal    ; palette editor, part 2
             ; tell NMI routine to update 5 VRAM bytes
             jsr user_pal_offset
             pha
-            ldx vram_buf_pos
+            ldx vram_count
+            cpx #11             ; room for 5?
+            bcs +
             lda #$3f            ; selected color -> background palette
-            sta vram_buf_hi+1,x
+            sta vram_buf_hi,x
             pla
-            sta vram_buf_lo+1,x
+            sta vram_buf_lo,x
             tay
             lda user_palette,y
-            sta vram_buf_val+1,x
+            sta vram_buf_val,x
+            inx
             lda #$3f            ; 1st color of all subpalettes
-            sta vram_buf_hi+2,x
+            sta vram_buf_hi,x
             lda #(4*4+2)
-            sta vram_buf_lo+2,x
+            sta vram_buf_lo,x
             lda user_palette+0
-            sta vram_buf_val+2,x
+            sta vram_buf_val,x
+            inx
             lda pal_edit_subpal     ; subpalette offset in user palette -> Y
             asl a
             asl a
             tay
             lda #$3f            ; 2nd color of selected subpalette
-            sta vram_buf_hi+3,x
+            sta vram_buf_hi,x
             lda #(5*4+2)
-            sta vram_buf_lo+3,x
+            sta vram_buf_lo,x
             lda user_palette+1,y
-            sta vram_buf_val+3,x
+            sta vram_buf_val,x
+            inx
             lda #$3f            ; 3rd color of selected subpalette
-            sta vram_buf_hi+4,x
+            sta vram_buf_hi,x
             lda #(6*4+2)
-            sta vram_buf_lo+4,x
+            sta vram_buf_lo,x
             lda user_palette+2,y
-            sta vram_buf_val+4,x
+            sta vram_buf_val,x
+            inx
             lda #$3f            ; 4th color of selected subpalette
-            sta vram_buf_hi+5,x
+            sta vram_buf_hi,x
             lda #(7*4+2)
-            sta vram_buf_lo+5,x
+            sta vram_buf_lo,x
             lda user_palette+3,y
-            sta vram_buf_val+5,x
-            txa                 ; update buffer pointer
-            clc
-            adc #5
-            sta vram_buf_pos
-
-            rts                 ; return to main loop
+            sta vram_buf_val,x
+            inx
+            stx vram_count
+            rts
++           pla
+            rts
 
 user_pal_offset lda pal_edit_cursor_pos  ; offset to user palette (user_palette or VRAM $3f00-$3f0f) -> A, X
             beq +            ; if 1st color of any subpal, zero
@@ -988,29 +1017,34 @@ nmi         pha            ; push A, X, Y
             lda vram_ready    ; only update VRAM if main loop says it's ready
             beq skip_vram
 
-            ldx #0            ; update VRAM from buffer
--           lda vram_buf_hi,x   ; high byte of address (0 = terminator)
-            beq +
+            ldx vram_count    ; update VRAM from buffer
+            beq nmi_done_vram
+nmi_loop    dex
+            lda vram_buf_hi,x
             sta ppu_addr
-            lda vram_buf_lo,x   ; low byte of address
+            lda vram_buf_lo,x
             sta ppu_addr
-            lda vram_buf_val,x  ; value
+            lda vram_buf_val,x
             sta ppu_data
-            inx
-            jmp -
+            txa
+            bne nmi_loop
 
-+           lda #$00         ; clear VRAM buffer (put terminator at beginning)
-            sta vram_buf_hi+0
+nmi_done_vram lda #0
+            sta vram_count    ; reset count
             sta vram_ready   ; reset ready flag
 
-skip_vram   sta ppu_addr      ; reset PPU address
-            sta ppu_addr
-            sta ppu_scroll    ; set PPU scroll
+skip_vram   ; PROPER SCROLL RESET
+            lda #%10001000    ; NMI enabled, Nametable 0
+            sta ppu_ctrl
+            bit ppu_status    ; reset latch
+            lda #$00
+            sta ppu_scroll    ; horizontal scroll = 0
             lda #v_scroll
-            sta ppu_scroll
-            sec              ; set flag to let main loop run once
+            sta ppu_scroll    ; vertical scroll
+            
+            sec               ; set flag to let main loop run once
             ror runmain
-            pla              ; pull Y, X, A
+            pla               ; pull Y, X, A
             tay
             pla
             tax
