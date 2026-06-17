@@ -88,7 +88,7 @@ color_ind_tile  equ $16  ; color indicator (palette editor)
 
 ; misc
 blink_rate   equ 4      ; attribute/palette editor cursor blink rate (0=fastest, 7=slowest)
-brush_delay  equ 10     ; paint cursor move repeat delay (frames)
+brush_delay  equ 2      ; paint cursor move repeat delay (frames)
 v_scroll     equ 256-8  ; PPU vertical scroll value (VRAM $2000 is at the top of visible area)
 
 ; --- iNES header ---------------------------------------------------------------------------------
