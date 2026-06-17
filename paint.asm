@@ -72,13 +72,14 @@ def_color_3c  equ $32
 ; user interface colors
 pal_edit_bg_color  equ $0f  ; palette editor background (black)
 pal_edit_txt_color equ $30  ; palette editor text (white)
-blinkcol1   equ $0f  ; blinking cursor 1 (black)
-blinkcol2   equ $30  ; blinking cursor 2 (white)
+blinkcol1   equ $00  ; blinking cursor 1
+blinkcol2   equ $10  ; blinking cursor 2 (gray)
 
 ; sprite tile indexes (note: hexadecimal digits "0"-"F" must start at $00)
 small_cursor_tile equ $10  ; small paint cursor
 large_cursor_tile  equ $11  ; large paint cursor
 attr_cursor_tile equ $12  ; corner of attribute cursor
+dotted_corner_tile equ $17 ; dotted corner for auto-attr indicator
 cover_tile   equ $13  ; cover (palette editor)
 pal_tile_1    equ $14  ; left  half of "Pal" (palette editor)
 pal_tile_2    equ $15  ; right half of "Pal" (palette editor)
@@ -149,8 +150,19 @@ reset       ; initialize the NES; see https://wiki.nesdev.org/w/index.php/Init_c
             dex
             bpl -
 
-            ldx #(1*4)       ; hide sprites except paint cursor (#0)
-            ldy #63
+            ldx #(1*4)       ; show impact box sprites (#1-#4)
+            ldy #4
+-           lda init_sprite_data,x
+            sta sprite_data,x
+            inx
+            inx
+            inx
+            inx
+            dey
+            bne -
+
+            ldx #(5*4)       ; hide remaining sprites (#5-#63)
+            ldy #59
             jsr hide_sprites  ; X = first byte index, Y = count
 
             lda #30         ; init misc vars
@@ -261,8 +273,8 @@ init_palette ; initial palette
 
 init_sprite_data ; initial sprite data (Y, tile, attributes, X for each sprite)
             ; paint mode
-            db    $ff, small_cursor_tile, %00000000,    0  ; #0:  cursor
-            ; attribute editor
+            db    $ff, small_cursor_tile, %00000001,    0  ; #0:  cursor
+            ; attribute editor / paint impact indicator
             db    $ff, attr_cursor_tile, %00000000,    0  ; #1:  cursor top left
             db    $ff, attr_cursor_tile, %01000000,    0  ; #2:  cursor top right
             db    $ff, attr_cursor_tile, %10000000,    0  ; #3:  cursor bottom left
@@ -313,6 +325,9 @@ paint_mode   lda prev_pad_status  ; select/B/start logic
             sta mode
             lda #$ff         ; hide paint cursor sprite
             sta sprite_data+0+0
+            ldx #(1*4)       ; hide impact box sprites (#1-#4)
+            ldy #4
+            jsr hide_sprites
             ldx #(5*4)       ; show palette editor sprites (#5-#23)
 -           lda init_sprite_data,x
             sta sprite_data,x
@@ -430,20 +445,39 @@ paint_mode_2  ; paint mode, part 2
             lda cursortiles,x
             sta sprite_data+0+1
 
+            ; update impact box sprites (#1-#4)
+            lda #dotted_corner_tile
+            sta sprite_data+1*4+1
+            sta sprite_data+2*4+1
+            sta sprite_data+3*4+1
+            sta sprite_data+4*4+1
+
+            lda cursor_x
+            and #%11111100
+            asl a
+            asl a
+            sta sprite_data+4+3 ; #1 X
+            sta sprite_data+3*4+3 ; #3 X
+            adc #8             ; carry is always clear
+            sta sprite_data+2*4+3 ; #2 X
+            sta sprite_data+4*4+3 ; #4 X
+            
+            lda cursor_y
+            and #%11111100
+            asl a
+            asl a
+            adc #(8-1)         ; carry is always clear
+            sta sprite_data+4+0 ; #1 Y
+            sta sprite_data+2*4+0 ; #2 Y
+            adc #8             ; carry is always clear
+            sta sprite_data+3*4+0 ; #3 Y
+            sta sprite_data+4*4+0 ; #4 Y
+
             ; tell NMI routine to update cursor color
             ldx paint_color       ; color 0 is common to all subpalettes
             beq ++
-            jsr attr_vram_offset      ; get vram_offset and vram_copy_addr
-            jsr attr_bit_pos       ; 0/2/4/6 -> X
-            ldy #0               ; read attribute byte
-            lda (vram_copy_addr),y
-            cpx #0               ; shift relevant bit pair to positions 1-0
-            beq +
--           lsr a
-            dex
-            bne -
-+           and #%00000011       ; clear other bits
-            asl a                ; index to user_palette -> X
+            lda active_subpalette
+            asl a
             asl a
             ora paint_color
             tax
@@ -453,7 +487,7 @@ paint_mode_2  ; paint mode, part 2
             ldx vram_buf_pos
             lda #$3f
             sta vram_buf_hi,x
-            lda #(4*4+3)
+            lda #$17             ; palette 1 color 3
             sta vram_buf_lo,x
             pla
             sta vram_buf_val,x
@@ -550,9 +584,16 @@ attr_editor  lda prev_pad_status    ; if any button pressed on previous frame, i
 +           lda pad_status      ; if select pressed, switch back to paint mode (small brush)
             and #pad_select
             beq +
-            ldx #(1*4)         ; hide attribute editor sprites (#1-#4)
+            ldx #(1*4)         ; re-init impact box sprites (#1-#4)
             ldy #4
-            jsr hide_sprites    ; X = first byte index, Y = count
+-           lda init_sprite_data,x
+            sta sprite_data,x
+            inx
+            inx
+            inx
+            inx
+            dey
+            bne -
             lda #0             ; mode 0 = small brush
             sta mode
             sta brush_size
@@ -616,7 +657,12 @@ ae_check_vert lda pad_status    ; check vertical arrows
             lda #(56-4)
 +++         sta cursor_y      ; store vertical position
 
-attr_editor_2 lda cursor_x        ; update cursor sprite X
+attr_editor_2 lda #attr_cursor_tile
+            sta sprite_data+1*4+1
+            sta sprite_data+2*4+1
+            sta sprite_data+3*4+1
+            sta sprite_data+4*4+1
+            lda cursor_x        ; update cursor sprite X
             asl a
             asl a
             sta sprite_data+4+3
@@ -766,6 +812,16 @@ pe_exit     lda pal_edit_cursor_pos
             bcs +
             lda init_sprite_data+0+0  ; show paint cursor sprite
             sta sprite_data+0+0
+            ldx #(1*4)       ; show impact box sprites (#1-#4)
+            ldy #4
+-           lda init_sprite_data,x
+            sta sprite_data,x
+            inx
+            inx
+            inx
+            inx
+            dey
+            bne -
             rts
 +           ; we were in attribute editor (2)
             ldx #(1*4)

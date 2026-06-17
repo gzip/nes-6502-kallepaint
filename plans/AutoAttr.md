@@ -16,30 +16,29 @@ When exiting the Palette Editor via the `pe_exit` label:
 - Update `paint_color` from `pal_edit_cursor_pos`.
 - Update `active_subpalette` from `pal_edit_subpal`.
 
-## 4. Automatic Attribute Stamping
+## 4. Automatic Attribute Logic
 Modify `paint_mode` to automatically update the attribute table when painting.
-- After the `jsr to_vram_buf` call (or within the `update_tile` routine), add a call to a new subroutine: `jsr auto_update_attribute`.
+- **Trigger**: Call `jsr auto_update_attribute` within the `update_tile` routine.
+- **Subroutine**: `auto_update_attribute` calculates the attribute offset, bit position, masks the old quadrant bits, and applies the `active_subpalette`.
 
-## 5. Subroutine: `auto_update_attribute`
-This routine will perform the bitwise manipulation necessary to change only the 2-bit subpalette selection for the current 16x16 quadrant.
+## 5. WYSIWYG Cursor Preview
+The paint cursor currently previews the color based on the *existing* attribute table. This is misleading now that the attribute will change upon clicking.
+- **Change**: Update the cursor color calculation in `paint_mode_2`.
+- **Logic**: Use `active_subpalette` to calculate the color index in `user_palette` (Index = `active_subpalette * 4 + paint_color`).
+- **Benefit**: The user sees the exact final color they are about to paint.
 
-**Logic**:
-1.  **Calculate Offset**: Call existing `attr_vram_offset` to set `vram_offset` and `vram_copy_addr`.
-2.  **Calculate Bit Position**: Call existing `attr_bit_pos` to get the shift amount (0, 2, 4, or 6) in `X`.
-3.  **Fetch & Mask**: 
-    - Load the attribute byte from `(vram_copy_addr)`.
-    - Clear the target 2-bit quadrant using a mask derived from `bp_change_masks` or by dynamic shifting.
-4.  **Set New Bits**: 
-    - Take `active_subpalette`.
-    - Shift it left by `X`.
-    - `OR` it into the byte.
-5.  **Write Back**: 
-    - Store the modified byte back into `(vram_copy_addr)`.
-    - Call `to_vram_buf` to queue the PPU update.
+## 6. 16x16 Attribute Impact Indicator
+Since painting now affects an entire 16x16 area, the user needs to know exactly which area is being targeted.
+- **Change**: Re-enable and repurpose the attribute editor's corner sprites (#1-#4) during Paint Mode.
+- **Logic**: 
+    - These sprites will follow the cursor but "snap" to the 16x16 grid.
+    - Snap Logic: `Indicator_X = (cursor_x & %00111100) * 4`, `Indicator_Y = ((cursor_y & %00111100) * 4) + 8`.
+- **Result**: A dashed/corner frame will always show the "impact zone" of the auto-attribute feature.
 
 ## Expected User Experience
 1. User enters Palette Editor (Start).
 2. User selects Subpalette 2, Color 3.
 3. User exits Palette Editor (Start).
-4. User paints on the canvas (A).
-5. **Result**: The tile is updated to Color 3, and the surrounding 16x16 area is automatically switched to Subpalette 2.
+4. **Visual**: The brush is now Color 3, and a 16x16 frame appears on the grid, snapping to attribute boundaries.
+5. User paints on the canvas (A).
+6. **Result**: The tile is updated to Color 3, and the area within the 16x16 frame is automatically switched to Subpalette 2.
