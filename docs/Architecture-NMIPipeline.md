@@ -16,18 +16,20 @@ This dual-flag system ensures the CPU logic never "outruns" the TV's refresh rat
 Because the VBlank window is so short, the CPU cannot perform complex calculations during that time. Instead, the `mainloop` prepares a "to-do list" in the **Zero Page** (the fastest RAM).
 
 The buffer consists of three 16-byte arrays:
-*   `vram_buf_hi`: Target PPU address (high byte). A `0` here acts as a terminator.
+*   `vram_buf_hi`: Target PPU address (high byte).
 *   `vram_buf_lo`: Target PPU address (low byte).
 *   `vram_buf_val`: The 8-bit value (tile index or color) to write.
 
+An additional variable, `vram_count`, tracks the number of active entries in the queue.
+
 ### How Updates are Queued
-1.  **Frame Start:** Every frame, `vram_buf_pos` is reset to `0`.
-2.  **Cursor Update:** The system always puts a mandatory update at index `0` to handle the blinking cursor's color in the PPU palette RAM (`$3Fxx`).
+1.  **Frame Start:** Every frame, `vram_count` is reset to `0`.
+2.  **Cursor/Indicator Update:** The system always puts a mandatory update at index `0` to handle the blinking cursor (Paint mode) or flashing background indicator (Attribute mode) in the PPU palette RAM (`$3Fxx`).
 3.  **Drawing Updates:** If a user paints or changes an attribute, the code calls `to_vram_buf`. This routine:
-    *   Increments `vram_buf_pos`.
+    *   Checks if `vram_count` has reached the limit of 16 entries.
     *   Calculates the PPU destination address (Offset + `$2000`).
-    *   Stores the high/low address and the value in the next available buffer slot.
-4.  **Termination:** At the end of the loop, a `0` is written to `vram_buf_hi + vram_buf_pos + 1`. This tells the NMI routine where to stop.
+    *   Stores the high/low address and the value in the next available buffer slot (`vram_buf_xx[vram_count]`).
+    *   Increments `vram_count`.
 
 ## 3. The NMI Routine (The "Blast")
 
@@ -35,11 +37,10 @@ The **Non-Maskable Interrupt (NMI)** is a hardware interrupt triggered by the PP
 
 ### Step-by-Step Execution:
 1.  **OAM DMA:** It first triggers a Sprite DMA. This hardware feature automatically copies 256 bytes of sprite data from CPU RAM (`$0200-$02FF`) to the PPU's internal sprite memory. This is why the cursor moves smoothly.
-2.  **Buffer Flush:** It iterates through the VRAM buffer. For each entry:
+2.  **Buffer Flush:** It reads `vram_count` and iterates backwards through the buffer. For each entry:
     *   It writes the high and low address bytes to the PPU register `$2006` (`ppu_addr`).
     *   It writes the value to the PPU register `$2007` (`ppu_data`).
-    *   It stops as soon as it reads a `0` for the high address byte.
-3.  **Buffer Reset:** It clears the first byte of the buffer (`vram_buf_hi[0] = 0`) to prevent stale data from being written if the next frame has no updates.
+3.  **Buffer Reset:** It clears `vram_count` and the `vram_ready` flag to signal that the rendering task is complete.
 4.  **PPU State Restore:** Because the VRAM writes change the PPU's internal address pointer, the NMI routine must reset the scroll (`ppu_scroll`) and the base address. If it didn't, the entire screen would jitter or disappear.
 5.  **Signal Main Loop:** Finally, it sets the `runmain` flag, telling the CPU that the hardware is ready for the next frame of logic.
 

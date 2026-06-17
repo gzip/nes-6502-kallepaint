@@ -21,17 +21,21 @@ This is a 6502 assembly paint program designed specifically for the Nintendo Ent
 
 ## Timing and Responsiveness
 
-The "feel" of Kalle Paint is dictated by the relationship between the NES hardware interrupts and the software's input processing:
+The "feel" of Kalle Paint is dictated by a dynamic input processing system that balances fast navigation with surgical drawing precision:
 
-*   **Synchronous Polling**: The `mainloop` is locked to the **NMI (Vertical Blank)** interrupt. The engine polls the controller exactly once per frame (60 times per second), ensuring that every frame starts with the most up-to-date input data.
-*   **The Drawing Throttle (`brush_delay`)**: Although input is polled at 60Hz, the cursor movement and drawing speed are throttled by a software constant called `brush_delay` (currently set to 2). This means the engine waits for 2 additional frames between each 1-pixel movement while a direction is held.
-    *   **Effective Speed**: This results in a drawing speed of **20 pixels per second**. 
-*   **VRAM Stability**: This link between movement and frame-timing ensures that the PPU's VRAM buffer is never overwhelmed. Since each drawing action (small or large brush) generates a deterministic number of VRAM updates, locking drawing to the frame rate prevents "buffer overflow" and the resulting graphical corruption.
+*   **Synchronous Polling**: The `mainloop` is locked to the **NMI (Vertical Blank)** interrupt. The engine polls the controller exactly once per frame (60 times per second), ensuring zero input latency.
+*   **Delayed Auto Shift (DAS)**: To prevent accidental "pixel jumping," the engine applies a 16-frame delay (1/4 second) on the first D-pad press. This makes it easy to tap a single direction for precise 1-pixel adjustments without triggering a runaway repeat.
+*   **Context-Sensitive "Gears"**: The engine dynamically adjusts movement speed based on user intent:
+    *   **Navigation Gear**: When moving the cursor freely, the cursor moves at a high repeat rate.
+    *   **Precision Gear**: While the **A** button is held to draw, the movement speed automatically drops by half. This "aim-down-sights" mechanic provides the fine control needed for detailed pixel work.
+*   **Normalized Visual Speed**: Movement is now scaled based on the current mode's step size (1, 2, or 4 units). This ensures that the cursor traverses the screen at the same visual speed regardless of whether you are using the small brush, large brush, or attribute editor.
 
 ## Operating Modes
 
 1.  **Paint Mode**: Allows drawing with a 1x1 or 2x2 brush (using the "paint pixels" described above). When you draw, it calculates the new state of the 2x2 grid in that specific 8x8 tile, determines the new tile index (0-255), and queues an update to the shadow VRAM.
-2.  **Attribute Editor**: The NES groups color palettes in 32x32 pixel attribute blocks, which are subdivided into four 16x16 pixel quadrants. This mode changes your cursor into a 16x16 box that snaps to a 16x16 grid. It allows you to target and assign one of the four subpalettes to that specific 16x16 quadrant without affecting the rest of the 32x32 attribute block.
+2.  **Attribute Editor**: Allows assigning subpalettes to 16x16 quadrants. The cursor in this mode flashes with the color of the selected subpalette, providing a visual preview. 
+    *   **B Button**: Cycles the active subpalette.
+    *   **A Button**: Stamps the selection to the grid.
 3.  **Palette Editor**: Allows real-time modification of the 13 available on-screen colors.
 
 In short, it's a very clever use of NES hardware limitations, utilizing procedural tile generation to simulate bitmap graphics on a tile-based console.

@@ -13,13 +13,13 @@ Based on `paint.asm`, the core RAM layout is organized as follows:
 ### Zero Page (`$0000` - `$00FF`)
 The Zero Page is the fastest RAM to access on the 6502. Kalle Paint uses it for the most critical variables and the VRAM update queue.
 
-*   `$00` - `$0F`: **`vram_buf_hi`** (VRAM buffer - High byte of target addresses, `0` acts as a terminator)
+*   `$00` - `$0F`: **`vram_buf_hi`** (VRAM buffer - High byte of target addresses)
 *   `$10` - `$1F`: **`vram_buf_lo`** (VRAM buffer - Low byte of target addresses)
 *   `$20` - `$2F`: **`vram_buf_val`** (VRAM buffer - The actual tile/color data to write)
 *   `$40` - `$41`: **`vram_offset`** (Calculated 16-bit offset into the Name/Attribute table, 0 - `$3FF`)
 *   `$42` - `$43`: **`vram_copy_addr`** (Absolute 16-bit address pointing into `vram_copy` in RAM)
 *   `$44`: **`mode`** (Current application mode: Paint, Attr Edit, Pal Edit)
-*   `$48`: **`vram_buf_pos`** (Index tracking how many items are currently in the VRAM buffer)
+*   `$48`: **`vram_count`** (Counter tracking how many items are currently in the VRAM buffer)
 *   `$53`: **`active_subpalette`** (The subpalette currently used by the paint brush for auto-attribute stamping)
 
 *Note: The VRAM buffer is exactly 16 entries long. This limits the program to updating a maximum of 16 bytes of graphics per frame (1/60th of a second).*

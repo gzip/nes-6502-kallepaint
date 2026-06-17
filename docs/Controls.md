@@ -24,13 +24,15 @@ These modes are used for drawing on the canvas. The cursor visually reflects the
 **Impact Box**: A 16x16 dashed frame follows the cursor, snapping to the attribute grid. This indicates the area that will be automatically updated to your selected subpalette when you paint.
 
 ### Controls:
-*   **D-Pad (Up/Down/Left/Right):** Move the cursor. Holding a direction will move the cursor repeatedly.
+*   **D-Pad (Up/Down/Left/Right):** Move the cursor. 
+    *   **Delayed Auto Shift (DAS):** A short delay exists on the first press to allow for single-pixel precision taps.
+    *   **Context-Sensitive Speed:** Holding a direction will move the cursor repeatedly. The cursor moves significantly faster while navigating and slows down to a "precision gear" while the **A** button is held for drawing.
 *   **B Button:** Cycle through the 4 colors of the currently active subpalette (Color 0 -> 1 -> 2 -> 3 -> 0).
 *   **A Button:** Paint at the cursor's location. The surrounding 16x16 area is automatically updated to the active subpalette.
 *   **Select:** Cycle the mode (Small Brush &rarr; Large Brush &rarr; Attribute Editor).
 *   **Start:** Open the **Palette Editor**.
 
-*Note: The cursor is now a "What You See Is What You Get" (WYSIWYG) preview. It shows the exact color that will be painted, regardless of the current attribute table.*
+*Note: Visual speeds are normalized across all modes. Whether you are in Small Brush, Large Brush, or Attribute mode, the cursor will traverse the screen at the same visual rate.*
 
 ---
 
@@ -42,10 +44,12 @@ In this mode, the cursor changes into a large, blinking 16x16 pixel square that 
 
 ### Controls:
 *   **D-Pad (Up/Down/Left/Right):** Move the attribute cursor (snaps to 16x16 pixel quadrants).
-*   **B Button:** Decrement the subpalette assigned to the highlighted square.
-*   **A Button:** Increment the subpalette assigned to the highlighted square (Subpalette 0 <-> 1 <-> 2 <-> 3).
+*   **B Button:** Cycle to the next subpalette (0 -> 1 -> 2 -> 3 -> 0).
+*   **A Button:** "Stamp" the assigned subpalette to the highlighted 16x16 square.
 *   **Select:** Switch back to Paint Mode (Small Brush).
 *   **Start:** Open the **Palette Editor**.
+
+*Note: The cursor flashes with the color of the selected subpalette. This provides a visual preview of the attribute you are about to apply.*
 
 *Note: The first color (Color 0) of every subpalette is shared across the entire screen. Changing the subpalette of a square will have no visible effect on pixels drawn with that shared background color.*
 
