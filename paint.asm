@@ -565,11 +565,11 @@ pixel_masks  db %11000000, %00110000, %00001100, %00000011  ; bitmasks for pixel
 
 ; --- Attribute editor (code label prefix "ae") ---------------------------------------------------
 
-attr_editor  lda prev_pad_status    ; if any button pressed on previous frame, ignore all
-            beq +
-            jmp attr_editor_2    ; TODO: code golf to get label within branch range
+attr_editor  lda prev_pad_status  ; surgical debounce for mode-switching buttons
+            and #(pad_start|pad_select)
+            bne ae_arrows
 
-+           lda pad_status      ; if start pressed, switch to palette editor
+            lda pad_status      ; if start pressed, switch to palette editor
             and #pad_start
             beq +
             lda mode          ; save current mode
@@ -592,7 +592,7 @@ attr_editor  lda prev_pad_status    ; if any button pressed on previous frame, i
 
 +           lda pad_status      ; if select pressed, switch back to paint mode (small brush)
             and #pad_select
-            beq +
+            beq ae_arrows
             ldx #(1*4)         ; re-init impact box sprites (#1-#4)
             ldy #4
 -           lda init_sprite_data,x
@@ -610,13 +610,16 @@ attr_editor  lda prev_pad_status    ; if any button pressed on previous frame, i
             sta sprite_data+0+0
             rts                ; return to main loop
 
-+           lda pad_status        ; if A/B pressed, stamp the active subpalette
-            and #(pad_a|pad_b)
-            beq ae_arrows
-            jsr auto_update_attribute
-            jmp ae_arrows
-
-ae_arrows    lda pad_status    ; check horizontal arrows
+ae_arrows    lda pad_status    ; arrow logic
+            and #(pad_up|pad_down|pad_left|pad_right)
+            bne +
+            sta delay_left    ; if none pressed, clear cursor move delay
+            beq ae_check_stamp
++           lda delay_left    ; else if delay > 0, decrement it and exit
+            beq +
+            dec delay_left
+            bpl ae_check_stamp
++           lda pad_status    ; check horizontal arrows
             lsr a
             bcs +
             lsr a
@@ -636,7 +639,7 @@ ae_check_vert lda pad_status    ; check vertical arrows
             bcs +
             lsr a
             bcs ++
-            bcc attr_editor_2  ; unconditional
+            bcc ae_arrow_end  ; unconditional
 +           lda cursor_y      ; down
             adc #(4-1)       ; carry is always set
             cmp #56
@@ -648,6 +651,14 @@ ae_check_vert lda pad_status    ; check vertical arrows
             bpl +++
             lda #(56-4)
 +++         sta cursor_y      ; store vertical position
+
+ae_arrow_end lda #brush_delay  ; reinit cursor move delay
+            sta delay_left
+
+ae_check_stamp lda pad_status   ; if A/B pressed, stamp the active subpalette
+            and #(pad_a|pad_b)
+            beq attr_editor_2
+            jsr auto_update_attribute
 
 attr_editor_2 lda #attr_cursor_tile
             sta sprite_data+1*4+1
