@@ -610,28 +610,11 @@ attr_editor  lda prev_pad_status    ; if any button pressed on previous frame, i
             sta sprite_data+0+0
             rts                ; return to main loop
 
-+           lda pad_status        ; if A/B pressed, change attribute block subpalette (bit pair)
++           lda pad_status        ; if A/B pressed, stamp the active subpalette
             and #(pad_a|pad_b)
             beq ae_arrows
-            jsr attr_vram_offset      ; get vram_offset and vram_copy_addr
-            jsr attr_bit_pos       ; 0/2/4/6 -> X
-            ldy #0               ; attribute byte to modify -> stack
-            lda (vram_copy_addr),y
-            pha
-            and bp_change_masks,x     ; attr byte with bits other than LSB of bit pair cleared -> A
-            bit pad_status        ; if A pressed, increment subpalette, else decrement
-            bpl +
-            asl a                ; increment subpalette (ASL is only used to update zero flag)
-            beq ++               ; if LSB of bit pair CLEAR, only flip it, else INX to flip MSB too
-            inx
-            bpl ++               ; unconditional
-+           asl a                ; decrement subpalette (ASL is only used to update zero flag)
-            bne ++               ; if LSB of bit pair SET, only flip it, else INX to flip MSB too
-            inx
-++          pla                  ; pull original attribute byte
-            eor bp_change_masks,x     ; flip LSB only or MSB too
-            sta (vram_copy_addr),y  ; store to vram_copy (Y is still 0)
-            jsr to_vram_buf        ; tell NMI routine to update A to VRAM
+            jsr auto_update_attribute
+            jmp ae_arrows
 
 ae_arrows    lda pad_status    ; check horizontal arrows
             lsr a

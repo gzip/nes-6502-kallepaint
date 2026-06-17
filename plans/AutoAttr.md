@@ -35,6 +35,12 @@ Since painting now affects an entire 16x16 area, the user needs to know exactly 
     - Snap Logic: `Indicator_X = (cursor_x & %00111100) * 4`, `Indicator_Y = ((cursor_y & %00111100) * 4) + 8`.
 - **Result**: A dashed/corner frame will always show the "impact zone" of the auto-attribute feature.
 
+## 7. Modernized Attribute Editor
+The Attribute Editor (manual mode) currently cycles through subpalettes. This is inconsistent with the new workflow.
+- **Change**: Modify `attr_editor` to use the `active_subpalette` for stamping.
+- **Logic**: Replace the bit-flipping logic with a call to `auto_update_attribute`.
+- **Benefit**: Both Paint mode (automatic) and Attribute mode (manual) now use the same source of truth for subpalettes.
+
 ## Expected User Experience
 1. User enters Palette Editor (Start).
 2. User selects Subpalette 2, Color 3.
