@@ -30,6 +30,7 @@ active_subpalette equ $53 ; currently active subpalette (1-3)
 vram_ready  equ $54    ; VRAM buffer ready flag (1 = ready for NMI)
 sprite_data     equ $0200  ; $100 bytes (see init_sprite_data for layout)
 vram_copy    equ $0300  ; $400 bytes (copy of name/attribute table 0; must be at $xx00)
+; END RAM
 
 ; memory-mapped registers; see https://wiki.nesdev.org/w/index.php/PPU_registers
 ppu_ctrl     equ $2000
@@ -173,7 +174,9 @@ reset       ; initialize the NES; see https://wiki.nesdev.org/w/index.php/Init_c
             lda #0
             sta mode
             sta brush_size
-            inc paint_color
+            lda #1
+            sta paint_color
+            sta active_subpalette
 
             wait_vblank
 
@@ -218,6 +221,11 @@ reset       ; initialize the NES; see https://wiki.nesdev.org/w/index.php/Init_c
 mainloop    bit runmain      ; the main loop
             bpl mainloop     ; wait until NMI routine has run
             lsr runmain      ; clear flag to prevent main loop from running until after next NMI
+
+            lda #0
+            sta vram_ready
+            sta vram_buf_pos
+
             lda pad_status    ; store previous joypad status
             sta prev_pad_status
 
@@ -248,8 +256,6 @@ mainloop    bit runmain      ; the main loop
             sta vram_buf_pos
 
             inc blink_timer  ; advance timer
-            lda #0               ; ensure vram is not ready while we build the buffer
-            sta vram_ready
             jsr jump_engine  ; run code for the program mode we're in
 
             ldx vram_buf_pos      ; append terminator to VRAM buffer
@@ -257,10 +263,6 @@ mainloop    bit runmain      ; the main loop
             sta vram_buf_hi+1,x
             lda #1               ; signal that buffer is ready for NMI
             sta vram_ready
-
--           bit runmain      ; wait until NMI routine has run
-            bpl -
-            lsr runmain      ; clear flag to prevent main loop from running until after next NMI
 
             jmp mainloop
 
