@@ -313,7 +313,7 @@ init_palette ; initial palette
             db def_bg_color, pal_edit_bg_color, def_bg_color,  def_color_0a
             db def_bg_color, pal_edit_bg_color, def_color_0a, pal_edit_txt_color
             db def_bg_color, pal_edit_bg_color, def_color_0b,         $00
-            db def_bg_color, pal_edit_bg_color, def_color_0c,         $00
+            db def_bg_color, pal_edit_bg_color, def_color_0c, pal_edit_txt_color
 
 init_sprite_data ; initial sprite data (Y, tile, attributes, X for each sprite)
             ; paint mode
@@ -325,12 +325,12 @@ init_sprite_data ; initial sprite data (Y, tile, attributes, X for each sprite)
             db    $ff, attr_cursor_tile, %11000000,    0  ; #4:  cursor bottom right
             ; palette editor
             db    $ff,  large_cursor_tile, %00000000, 29*8  ; #5:  cursor
-            db 22*8-1,    pal_tile_1, %00000001, 28*8  ; #6:  left  half of "Pal"
-            db 22*8-1,    pal_tile_2, %00000001, 29*8  ; #7:  right half of "Pal"
-            db 22*8-1,         $00, %00000001, 30*8  ; #8:  subpalette number
-            db 23*8-1,         $0c, %00000001, 28*8  ; #9:  "C"
-            db 23*8-1,         $00, %00000001, 29*8  ; #10: color number - 16s
-            db 23*8-1,         $00, %00000001, 30*8  ; #11: color number - ones
+            db 22*8-1,    pal_tile_1, %00000011, 28*8  ; #6:  left  half of "Pal"
+            db 22*8-1,    pal_tile_2, %00000011, 29*8  ; #7:  right half of "Pal"
+            db 22*8-1,         $00, %00000011, 30*8  ; #8:  subpalette number
+            db 23*8-1,         $0c, %00000011, 28*8  ; #9:  "C"
+            db 23*8-1,         $00, %00000011, 29*8  ; #10: color number - 16s
+            db 23*8-1,         $00, %00000011, 30*8  ; #11: color number - ones
             db 24*8-1,  color_ind_tile, %00000000, 29*8  ; #12: color 0
             db 25*8-1,  color_ind_tile, %00000001, 29*8  ; #13: color 1
             db 26*8-1,  color_ind_tile, %00000010, 29*8  ; #14: color 2
