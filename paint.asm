@@ -250,8 +250,14 @@ mainloop    bit runmain      ; the main loop
 +           rol pad_status
             bcc -
 
-            lda #$3f             ; tell NMI routine to update blinking cursor in VRAM
+            lda #$3f             ; tell NMI routine to update blinking cursor/bg in VRAM
             sta vram_buf_hi+0
+            
+            lda mode             ; check if we are in attribute editor
+            cmp #2
+            beq blink_bg
+
+            ; Default: blinking cursor (Sprite Palette 0, Color 3)
             lda #(4*4+3)
             sta vram_buf_lo+0
             ldx #blinkcol1
@@ -260,7 +266,29 @@ mainloop    bit runmain      ; the main loop
             beq +
             ldx #blinkcol2
 +           stx vram_buf_val+0
-            lda #1               ; we have one entry (blinking cursor)
+            jmp blink_done
+
+blink_bg    ; Attribute Editor: flash cursor color ($3F13) with active subpalette color
+            lda #$13
+            sta vram_buf_lo+0
+            lda blink_timer
+            and #(1<<blink_rate)
+            beq +
+            ; Phase 1: Neutral cursor color (Light Gray)
+            lda #$10
+            sta vram_buf_val+0
+            jmp blink_done
++           ; Phase 2: Active subpalette color
+            lda active_subpalette
+            asl a
+            asl a
+            clc
+            adc #1
+            tax
+            lda user_palette,x
+            sta vram_buf_val+0
+
+blink_done  lda #1               ; we have one entry
             sta vram_count
 
             inc blink_timer  ; advance timer
