@@ -601,7 +601,7 @@ pixel_masks  db %11000000, %00110000, %00001100, %00000011  ; bitmasks for pixel
 ; --- Attribute editor (code label prefix "ae") ---------------------------------------------------
 
 attr_editor  lda prev_pad_status  ; surgical debounce for mode-switching buttons
-            and #(pad_start|pad_select)
+            and #(pad_start|pad_select|pad_b)
             bne ae_arrows
 
             lda pad_status      ; if start pressed, switch to palette editor
@@ -627,7 +627,7 @@ attr_editor  lda prev_pad_status  ; surgical debounce for mode-switching buttons
 
 +           lda pad_status      ; if select pressed, switch back to paint mode (small brush)
             and #pad_select
-            beq ae_arrows
+            beq +
             ldx #(1*4)         ; re-init impact box sprites (#1-#4)
             ldy #4
 -           lda init_sprite_data,x
@@ -644,6 +644,18 @@ attr_editor  lda prev_pad_status  ; surgical debounce for mode-switching buttons
             lda init_sprite_data+0+0  ; show paint cursor sprite
             sta sprite_data+0+0
             rts                ; return to main loop
+
++           lda pad_status      ; if B pressed, cycle the active subpalette
+            and #pad_b
+            beq ae_arrows
+            ldx active_subpalette
+            inx
+            txa
+            and #%00000011
+            sta active_subpalette
+            lda #1
+            sta cursor_color_dirty
+            ; fall through to ae_arrows
 
 ae_arrows    lda pad_status    ; arrow logic
             and #(pad_up|pad_down|pad_left|pad_right)
@@ -702,8 +714,8 @@ ae_check_vert lda pad_status    ; check vertical arrows
             lda #(56-4)
 +++         sta cursor_y      ; store vertical position
 
-ae_check_stamp lda pad_status   ; if A/B pressed, stamp the active subpalette
-            and #(pad_a|pad_b)
+ae_check_stamp lda pad_status   ; if A pressed, stamp the active subpalette
+            and #pad_a
             beq attr_editor_2
             jsr auto_update_attribute
 
