@@ -19,6 +19,15 @@ This is a 6502 assembly paint program designed specifically for the Nintendo Ent
 
 *   **`build.sh` / `build.bat`**: Simple build scripts. They first run the Python script(s) to generate the raw graphics binaries, and then use `asm6` to assemble `paint.asm` into a playable `.nes` ROM file.
 
+## Timing and Responsiveness
+
+The "feel" of Kalle Paint is dictated by the relationship between the NES hardware interrupts and the software's input processing:
+
+*   **Synchronous Polling**: The `mainloop` is locked to the **NMI (Vertical Blank)** interrupt. The engine polls the controller exactly once per frame (60 times per second), ensuring that every frame starts with the most up-to-date input data.
+*   **The Drawing Throttle (`brush_delay`)**: Although input is polled at 60Hz, the cursor movement and drawing speed are throttled by a software constant called `brush_delay` (currently set to 2). This means the engine waits for 2 additional frames between each 1-pixel movement while a direction is held.
+    *   **Effective Speed**: This results in a drawing speed of **20 pixels per second**. 
+*   **VRAM Stability**: This link between movement and frame-timing ensures that the PPU's VRAM buffer is never overwhelmed. Since each drawing action (small or large brush) generates a deterministic number of VRAM updates, locking drawing to the frame rate prevents "buffer overflow" and the resulting graphical corruption.
+
 ## Operating Modes
 
 1.  **Paint Mode**: Allows drawing with a 1x1 or 2x2 brush (using the "paint pixels" described above). When you draw, it calculates the new state of the 2x2 grid in that specific 8x8 tile, determines the new tile index (0-255), and queues an update to the shadow VRAM.
