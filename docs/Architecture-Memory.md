@@ -20,6 +20,7 @@ The Zero Page is the fastest RAM to access on the 6502. Kalle Paint uses it for 
 *   `$42` - `$43`: **`vram_copy_addr`** (Absolute 16-bit address pointing into `vram_copy` in RAM)
 *   `$44`: **`mode`** (Current application mode: Paint, Attr Edit, Pal Edit)
 *   `$48`: **`vram_buf_pos`** (Index tracking how many items are currently in the VRAM buffer)
+*   `$53`: **`active_subpalette`** (The subpalette currently used by the paint brush for auto-attribute stamping)
 
 *Note: The VRAM buffer is exactly 16 entries long. This limits the program to updating a maximum of 16 bytes of graphics per frame (1/60th of a second).*
 

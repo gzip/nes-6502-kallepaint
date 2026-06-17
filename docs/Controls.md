@@ -21,14 +21,16 @@ Pressing **Start** in any of the above modes will open the **Palette Editor**. P
 
 These modes are used for drawing on the canvas. The cursor visually reflects the currently selected brush size and paint color.
 
+**Impact Box**: A 16x16 dashed frame follows the cursor, snapping to the attribute grid. This indicates the area that will be automatically updated to your selected subpalette when you paint.
+
 ### Controls:
 *   **D-Pad (Up/Down/Left/Right):** Move the cursor. Holding a direction will move the cursor repeatedly.
 *   **B Button:** Cycle through the 4 colors of the currently active subpalette (Color 0 -> 1 -> 2 -> 3 -> 0).
-*   **A Button:** Paint at the cursor's location using the selected color and brush size.
+*   **A Button:** Paint at the cursor's location. The surrounding 16x16 area is automatically updated to the active subpalette.
 *   **Select:** Cycle the mode (Small Brush &rarr; Large Brush &rarr; Attribute Editor).
 *   **Start:** Open the **Palette Editor**.
 
-*Note: The cursor becomes invisible if it is hovering over a pixel of the exact same color. To move long distances faster, switch to the Large Brush mode via Select.*
+*Note: The cursor is now a "What You See Is What You Get" (WYSIWYG) preview. It shows the exact color that will be painted, regardless of the current attribute table.*
 
 ---
 
@@ -64,6 +66,6 @@ This mode brings up a small black window at the bottom right corner of the scree
 *   **Select:** Cycle to the next subpalette (Subpalette 0 -> 1 -> 2 -> 3 -> 0).
 *   **D-Pad (Left/Right):** Decrement/Increment the "ones" digit of the NES color number (changes hue).
 *   **B / A Buttons:** Decrement/Increment the "sixteens" digit of the NES color number (changes brightness).
-*   **Start:** Exit the editor and return to Paint Mode (Small Brush).
+*   **Start:** Exit the editor and return to Paint Mode. Your active brush and subpalette will be updated to match your selection in the editor.
 
-*Note: Because the top-most color in the list is shared across all subpalettes, editing it will change that background color everywhere on the screen simultaneously.*
+*Note: The Palette Editor is now the primary way to choose your drawing color and subpalette for the modernized paint workflow.*

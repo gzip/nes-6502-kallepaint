@@ -7,6 +7,7 @@ This is a 6502 assembly paint program designed specifically for the Nintendo Ent
 *   **Features**:
     *   **Canvas Size**: 64x56 "paint pixels" (halving the native NES resolution to 4x4 hardware pixel blocks).
     *   **Colors**: 13 simultaneous colors from the NES master palette.
+    *   **Modernized Paint**: Automatic attribute stamping allows painting with any subpalette without manual mode switching.
     *   **Modes**: Paint, Attribute Editor, and Palette Editor.
 *   **`paint.asm`**: This is the core engine. It contains the entire application logic written in 6502 assembly. Key features include:
     *   **Main Loop & Input**: Handles controller input and dictates the program flow across its three primary modes: Paint, Attribute Editor, and Palette Editor.
