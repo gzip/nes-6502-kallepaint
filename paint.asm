@@ -27,6 +27,7 @@ pal_edit_cursor_pos equ $50    ; cursor position (palette editor; 0-3)
 pal_edit_subpal equ $51    ; selected subpalette (palette editor; 0-3)
 prev_mode   equ $52    ; previous mode (to return to after palette editor)
 active_subpalette equ $53 ; currently active subpalette (1-3)
+vram_ready  equ $54    ; VRAM buffer ready flag (1 = ready for NMI)
 sprite_data     equ $0200  ; $100 bytes (see init_sprite_data for layout)
 vram_copy    equ $0300  ; $400 bytes (copy of name/attribute table 0; must be at $xx00)
 
@@ -247,13 +248,21 @@ mainloop    bit runmain      ; the main loop
             sta vram_buf_pos
 
             inc blink_timer  ; advance timer
+            lda #0               ; ensure vram is not ready while we build the buffer
+            sta vram_ready
             jsr jump_engine  ; run code for the program mode we're in
 
             ldx vram_buf_pos      ; append terminator to VRAM buffer
             lda #$00
             sta vram_buf_hi+1,x
+            lda #1               ; signal that buffer is ready for NMI
+            sta vram_ready
 
-            beq mainloop  ; unconditional
+-           bit runmain      ; wait until NMI routine has run
+            bpl -
+            lsr runmain      ; clear flag to prevent main loop from running until after next NMI
+
+            jmp mainloop
 
 init_palette ; initial palette
             ; background (also the initial user palette)
@@ -969,14 +978,19 @@ hide_sprites lda #$ff       ; hide some sprites (X = first index on sprite page,
 
 ; --- Interrupt routines --------------------------------------------------------------------------
 
-nmi         pha            ; push A, X (note: not Y)
+nmi         pha            ; push A, X, Y
             txa
+            pha
+            tya
             pha
             bit ppu_status  ; reset ppu_addr/ppu_scroll latch
             lda #$00       ; do OAM DMA
             sta oam_addr
             lda #>sprite_data
             sta oam_dma
+
+            lda vram_ready    ; only update VRAM if main loop says it's ready
+            beq skip_vram
 
             ldx #0            ; update VRAM from buffer
 -           lda vram_buf_hi,x   ; high byte of address (0 = terminator)
@@ -991,14 +1005,18 @@ nmi         pha            ; push A, X (note: not Y)
 
 +           lda #$00         ; clear VRAM buffer (put terminator at beginning)
             sta vram_buf_hi+0
-            sta ppu_addr      ; reset PPU address
+            sta vram_ready   ; reset ready flag
+
+skip_vram   sta ppu_addr      ; reset PPU address
             sta ppu_addr
             sta ppu_scroll    ; set PPU scroll
             lda #v_scroll
             sta ppu_scroll
             sec              ; set flag to let main loop run once
             ror runmain
-            pla              ; pull X, A
+            pla              ; pull Y, X, A
+            tay
+            pla
             tax
             pla
 

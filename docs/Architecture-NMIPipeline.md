@@ -4,11 +4,12 @@ On the NES, writing to Video RAM (VRAM) is restricted. Performing writes while t
 
 ## 1. The Main Loop Synchronization
 
-The main application logic and the hardware rendering are kept in sync via a simple flag called `runmain`.
+The main application logic and the hardware rendering are kept in sync via two flags: `runmain` and `vram_ready`.
 
-*   **Wait:** The `mainloop` starts by checking `runmain` (`bit runmain`). If the bit isn't set, it loops indefinitely.
-*   **Process:** Once the NMI routine sets the flag, the `mainloop` clears it (`lsr runmain`) and processes one frame of input and drawing.
-*   **Repeat:** This ensures the CPU logic never "outruns" the TV's refresh rate.
+*   **`runmain` (Timing):** The `mainloop` starts by checking `runmain` (`bit runmain`). If the bit isn't set, it loops indefinitely. Once the NMI routine sets the flag, the `mainloop` processes one frame of input and drawing.
+*   **`vram_ready` (Safety):** To prevent race conditions, the main loop clears `vram_ready` while building the VRAM buffer. It only sets the flag after the buffer is fully terminated. The NMI routine will skip the "Blast" (Step 2 in section 3) if this flag is not set, preventing it from processing a half-finished buffer if the main loop takes too long.
+
+This dual-flag system ensures the CPU logic never "outruns" the TV's refresh rate and never corrupts the PPU state during heavy logic calculations.
 
 ## 2. The VRAM Buffer Queue
 
