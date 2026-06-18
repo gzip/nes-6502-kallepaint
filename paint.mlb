@@ -1,0 +1,328 @@
+P:0000:: --- Start of PRG ROM ----------------------------------------------------------------------------\n only use last 2 KiB of CPU address space
+P:3800:reset: --- Initialization and main loop ----------------------------------------------------------------\n wait until next VBlank starts\n initialize the NES; see https://wiki.nesdev.org/w/index.php/Init_code\n ignore IRQs
+P:3801:: disable decimal mode
+P:3804:: disable APU frame IRQ
+P:3809:: initialize stack pointer
+P:380B:: disable NMI
+P:380E:: disable rendering
+P:3811:: disable DMC IRQs
+P:3814:: disable sound channels
+P:381F:: clear zero page and vram_copy
+P:3833:: init user palette
+P:383D:: init sprite data
+P:3848:: show impact box sprites (#1-#4)
+P:3859:: hide remaining sprites (#5-#63)
+P:385D:: X = first byte index, Y = count
+P:3860:: init misc vars
+P:387E:: init PPU palette
+P:3893:: clear name/attribute table 0 ($400 bytes)
+P:38A9:: reset ppu_addr/ppu_scroll latch
+P:38AC:: reset PPU address and set scroll
+P:38C4:: NMI, 8*8-px sprites, pattern table 0 for BG and 1 for sprites,
+P:38C6:: 1-byte VRAM address auto-increment, name table 0
+P:38C9:: show BG & sprites on entire screen,
+P:38CB:: don't use R/G/B de-emphasis or grayscale mode
+P:38CE:mainloop: the main loop
+P:38D0:: wait until NMI routine has run
+P:38D2:: clear flag to prevent main loop from running until after next NMI
+P:38DA:: store previous joypad status
+P:38DE:: read first joypad
+P:38E0:: initialize; set LSB of variable to detect end of loop
+P:38E9:: read 8 buttons; each one = OR of two LSBs
+P:38F6:: tell NMI routine to update blinking cursor/bg in VRAM
+P:38FA:: check if we are in attribute editor
+P:3900:: Default: blinking cursor (Sprite Palette 0, Color 3)
+P:3913:blink_bg: Attribute Editor: flash cursor color ($3F13) with active subpalette color
+P:391D:: Phase 1: Neutral cursor color (Light Gray)
+P:3924:: Phase 2: Active subpalette color
+P:3930:blink_done: we have one entry
+P:3934:: advance timer
+P:3936:: run code for the program mode we're in
+P:3939:: signal that buffer is ready for NMI
+P:3940:init_palette: initial palette\n background (also the initial user palette)
+P:3950:: sprites\n 2nd color in all subpalettes: palette editor background\n 3rd color in all subpalettes: selected colors in palette editor\n 4th color in 1st subpalette : all cursors\n 4th color in 2nd subpalette : palette editor text
+P:3960:init_sprite_data: initial sprite data (Y, tile, attributes, X for each sprite)\n paint mode\n #0:  cursor
+P:3964:: attribute editor / paint impact indicator\n #1:  cursor top left
+P:3968:: #2:  cursor top right
+P:396C:: #3:  cursor bottom left
+P:3970:: #4:  cursor bottom right
+P:3974:: palette editor\n #5:  cursor
+P:3978:: #6:  left  half of "Pal"
+P:397C:: #7:  right half of "Pal"
+P:3980:: #8:  subpalette number
+P:3984:: #9:  "C"
+P:3988:: #10: color number - 16s
+P:398C:: #11: color number - ones
+P:3990:: #12: color 0
+P:3994:: #13: color 1
+P:3998:: #14: color 2
+P:399C:: #15: color 3
+P:39A0:: #16: cover (to left  of color 0)
+P:39A4:: #17: cover (to right of color 0)
+P:39A8:: #18: cover (to left  of color 1)
+P:39AC:: #19: cover (to right of color 1)
+P:39B0:: #20: cover (to left  of color 2)
+P:39B4:: #21: cover (to right of color 2)
+P:39B8:: #22: cover (to left  of color 3)
+P:39BC:: #23: cover (to right of color 3)
+P:39C0:jump_engine: jump engine (run one sub depending on program mode)
+P:39C2:: note: don't inline this sub
+P:39C5:: push target address minus one, high byte first
+P:39CA:: pull address, low byte first; jump to that address plus one
+P:39CB:jump_table_hi: jump table - high bytes
+P:39CF:jump_table_lo: jump table - low bytes
+P:39D3:paint_mode: --- Paint mode (code label prefix "pm") ---------------------------------------------------------\n select/B/start logic
+P:39D7:: if any pressed on previous frame, ignore them all
+P:39D9:: if start pressed, switch to palette editor
+P:39DF:: save current mode
+P:39E3:: mode 3 = palette editor
+P:39E7:: hide paint cursor sprite
+P:39EC:: hide impact box sprites (#1-#4)
+P:39F3:: show palette editor sprites (#5-#23)
+P:3A03:: return to main loop
+P:3A04:: if select pressed, switch to next mode
+P:3A0A:: check if we are in small or large brush mode
+P:3A0C:: if small (0), go to large (1)
+P:3A0E:: we are in large brush mode (1), switch to attribute editor (2)\n mode 2 = attribute editor
+P:3A12:: hide paint cursor sprite
+P:3A17:: make cursor coordinates a multiple of four
+P:3A23:: return to main loop
+P:3A24:: mode 1 = large brush
+P:3A2A:: make coordinates even for large brush
+P:3A33:: if B pressed, increment paint color (0-3)
+P:3A45:pm_arrows: arrow logic
+P:3A4B:: save current arrow status
+P:3A50:: if any arrows were already held, jump to repeat logic
+P:3A52:: Fresh press (DAS)
+P:3A59:pm_no_arrows: if none pressed, clear cursor move delay
+P:3A5B:: unconditional; ends with rts
+P:3A5D:pm_repeat: else if delay > 0, decrement it and exit
+P:3A63:: unconditional; ends with rts
+P:3A6A:pm_move_cursor: check horizontal arrows
+P:3A72:: unconditional
+P:3A74:: right
+P:3A79:: unconditional
+P:3A7B:: left
+P:3A80:: store horizontal position
+P:3A84:pm_check_vert: check vertical arrows
+P:3A8E:: unconditional
+P:3A90:: down
+P:3A9B:: unconditional
+P:3A9D:: up
+P:3AA9:: store vertical position
+P:3AAB:paint_mode_2: paint mode, part 2\n update cursor sprite\n X pos
+P:3AB2:: Y pos
+P:3AB7:: screen-relative (line 0 = nametable line 0)
+P:3ABC:: tile
+P:3AC4:: update impact box sprites (#1-#4)
+P:3AD8:: #1 X
+P:3ADB:: #3 X
+P:3ADE:: carry is always clear
+P:3AE0:: #2 X
+P:3AE3:: #4 X
+P:3AED:: screen-relative (line 0 = nametable line 0)
+P:3AEF:: #1 Y
+P:3AF2:: #2 Y
+P:3AF5:: carry is always clear
+P:3AF7:: #3 Y
+P:3AFA:: #4 Y
+P:3B01:: color 0 is common to all subpalettes
+P:3B0C:: cursor color -> A
+P:3B0E:: append to VRAM buffer
+P:3B19:: palette 1 color 3
+P:3B2A:: if A not pressed, we are done
+P:3B30:: edit one byte (tile) in vram_copy and tell NMI routine to update it to VRAM\n compute offset to vram_copy and VRAM $2000;\n bits: cursor_y = 00ABCDEF, cursor_x = 00abcdef,\n -> vram_offset = 000000AB CDEabcde
+P:3B32:: A = 00ABCDE (Tile Y)
+P:3B37:: A = 000000AB
+P:3B3C:: A = 00000CDE
+P:3B42:: A = CDE00000
+P:3B47:: A = 00abcde
+P:3B4A:: vram_offset+0 = CDEabcde
+P:3B4C:: get vram_copy_addr
+P:3B53:: large brush -> replace entire byte (tile) with a solid color
+P:3B5B:: small brush -> replace a bit pair (pixel) within the original byte\n original byte -> stack
+P:3B60:: pixel position within tile (0-3) -> X
+P:3B69:: AND mask for clearing a bit pair -> temp
+P:3B70:: OR mask for changing a cleared bit pair -> X
+P:3B79:: pull original byte, clear bit pair and change it
+P:3B80:update_tile: update byte in vram_copy
+P:3B84:: tell NMI routine to update A to VRAM
+P:3B87:: update attribute for the current 16x16 area
+P:3B8A:rts_label: return to main loop
+P:3B8B:cursortiles: brush size -> cursor tile
+P:3B8D:solid_tiles: tiles of solid color 0-3
+P:3B91:pixel_masks: bitmasks for pixels within tile index
+P:3B95:attr_editor: --- Attribute editor (code label prefix "ae") ---------------------------------------------------\n surgical debounce for mode-switching buttons
+P:3B9B:: if start pressed, switch to palette editor
+P:3BA1:: save current mode
+P:3BA5:: mode 3 = palette editor
+P:3BA9:: hide attribute editor sprites (#1-#4)
+P:3BAD:: X = first byte index, Y = count
+P:3BB0:: show palette editor sprites (#5-#23)
+P:3BC0:: return to main loop
+P:3BC1:: if select pressed, switch back to paint mode (small brush)
+P:3BC7:: re-init impact box sprites (#1-#4)
+P:3BD8:: mode 0 = small brush
+P:3BDE:: show paint cursor sprite
+P:3BE4:: return to main loop
+P:3BE5:: if B pressed, cycle the active subpalette
+P:3BF7:ae_arrows: fall through to ae_arrows\n arrow logic
+P:3BFD:: save current arrow status
+P:3C02:: if any arrows were already held, jump to repeat logic
+P:3C04:: Fresh press (DAS)
+P:3C0B:ae_no_arrows: if none pressed, clear cursor move delay
+P:3C0F:ae_repeat: else if delay > 0, decrement it and exit
+P:3C1C:ae_move_cursor: check horizontal arrows
+P:3C24:: unconditional
+P:3C26:: right
+P:3C28:: carry is always set
+P:3C2A:: unconditional
+P:3C2C:: left
+P:3C2E:: carry is always set
+P:3C30:: store horizontal position
+P:3C34:ae_check_vert: check vertical arrows
+P:3C3E:: unconditional
+P:3C40:: down
+P:3C42:: carry is always set
+P:3C4A:: unconditional
+P:3C4C:: up
+P:3C4E:: carry is always set
+P:3C54:: store vertical position
+P:3C56:ae_check_stamp: if A pressed, stamp the active subpalette
+P:3C5F:attr_editor_2
+P:3C6D:: update cursor sprite X
+P:3C77:: carry is always clear
+P:3C7F:: update cursor sprite Y
+P:3C84:: screen-relative (line 0 = nametable line 0)
+P:3C8D:: ensure perfect 8-pixel alignment
+P:3C95:: return to main loop
+P:3C96:bp_change_masks: bit pair change masks (LSB or both LSB and MSB of each)
+P:3C9E:attr_bit_pos: --- Subroutines used by both paint mode and attribute editor ------------------------------------\n position within attribute byte -> X (0/2/4/6)
+P:3CA0:: bits: cursor_y = 00ABCDEF, cursor_x = 00abcdef -> X = 00000Dd0
+P:3CA8:: bit -> carry
+P:3CB0:attr_vram_offset: get VRAM offset for attribute byte, fall through to next sub
+P:3CB2:: bits: cursor_y = 00ABCDEF, cursor_x = 00abcdef
+P:3CB4:: -> vram_offset = $3c0 + 00ABCabc = 00000011 11ABCabc
+P:3CC3:: fall through to next sub
+P:3CC5:get_vram_copy_addr: get address within vram_copy
+P:3CC7:: vram_copy + vram_offset -> vram_copy_addr (vram_copy must be at $xx00)
+P:3CD1:to_vram_buf: tell NMI routine to write A to VRAM $2000 + vram_offset
+P:3CEA:get_dynamic_delay
+P:3CF0:: Paint mode 0 or 1: check if A (draw) is held
+P:3CF7:: Attr editor 2: check if A or B (stamp) is held
+P:3CFD:: Drawing delay table
+P:3D03:: Navigation delay table
+P:3D09:nav_delays
+P:3D0C:draw_delays
+P:3D0F:auto_update_attribute: sets vram_offset and vram_copy_addr
+P:3D12:: returns 0/2/4/6 in X
+P:3D15:: X = 1/3/5/7 for 2-bit mask
+P:3D19:: invert to clear bits
+P:3D1F:: get current attribute byte from vram_copy
+P:3D21:: clear the target quadrant bits
+P:3D25:: X = 0/2/4/6 for shifting
+P:3D26:: get subpalette (0-3)
+P:3D28:: safety
+P:3D2F:: active_subpalette is bits 1-0, shift by 2 each iteration
+P:3D34:: combine with other quadrants
+P:3D38:: update vram_copy
+P:3D3A:: queue VRAM update (uses vram_offset set by attr_vram_offset)
+P:3D3E:pal_editor: --- Palette editor (code label prefix "pe") -----------------------------------------------------\n if any button pressed on previous frame, ignore all
+P:3D4A:: right
+P:3D50:: left
+P:3D56:: down
+P:3D5C:: up
+P:3D62:: start
+P:3D68:: select
+P:3D71:: B
+P:3D7A:: A
+P:3D80:pe_exit
+P:3D8C:: exit palette editor (switch to previous mode)
+P:3D8E:: hide palette editor sprites (#5-#23)
+P:3D90:: X = first byte index, Y = count
+P:3D95:: restore program mode
+P:3D97:: if we were in paint mode (0 or 1)
+P:3D9B:: show paint cursor sprite
+P:3DA1:: show impact box sprites (#1-#4)
+P:3DB3:: we were in attribute editor (2)
+P:3DC3:: return to main loop
+P:3DC4:pe_inc_subpal: increment subpalette (0 -> 1 -> 2 -> 3 -> 0)
+P:3DC6:: carry is always set
+P:3DCC:: unconditional
+P:3DCE:pe_down: move down
+P:3DD1:: unconditional
+P:3DD3:pe_up: move up
+P:3DD6:pe_store_pos: store cursor pos
+P:3DDC:: unconditional
+P:3DDE:pe_inc_1s: increment ones
+P:3DE4:: unconditional
+P:3DE6:pe_dec_1s: decrement ones
+P:3DEC:pe_store_1s: store ones
+P:3DF9:: unconditional
+P:3DFB:pe_inc_16s: increment sixteens
+P:3E03:: unconditional
+P:3E05:pe_dec_16s: decrement sixteens
+P:3E0D:pe_store_16s: store sixteens
+P:3E11:: unconditional
+P:3E13:pal_editor_2: palette editor, part 2
+P:3E15:: update tile of selected subpalette
+P:3E18:: update cursor Y position
+P:3E1D:: carry is always clear
+P:3E22:: update sixteens tile of color number
+P:3E2E:: update ones tile of color number
+P:3E35:: tell NMI routine to update 5 VRAM bytes
+P:3E3B:: room for 5?
+P:3E3F:: selected color -> background palette
+P:3E4D:: 1st color of all subpalettes
+P:3E5A:: subpalette offset in user palette -> Y
+P:3E5F:: 2nd color of selected subpalette
+P:3E6D:: 3rd color of selected subpalette
+P:3E7B:: 4th color of selected subpalette
+P:3E8E:user_pal_offset: offset to user palette (user_palette or VRAM $3f00-$3f0f) -> A, X
+P:3E90:: if 1st color of any subpal, zero
+P:3E92:: else, subpalette * 4 + cursor pos
+P:3E9A:hide_sprites: --- Subroutines used by many parts of the program -----------------------------------------------\n hide some sprites (X = first index on sprite page, Y = count)
+P:3EA7:nmi: --- Interrupt routines --------------------------------------------------------------------------\n push A, X, Y
+P:3EAC:: reset ppu_addr/ppu_scroll latch
+P:3EAF:: do OAM DMA
+P:3EB9:: only update VRAM if main loop says it's ready
+P:3EBD:: update VRAM from buffer
+P:3EC1:nmi_loop
+P:3ED4:nmi_done_vram
+P:3ED6:: reset count
+P:3ED8:: reset ready flag
+P:3EDA:skip_vram: PROPER SCROLL RESET\n NMI enabled, Nametable 0
+P:3EDF:: reset latch
+P:3EE4:: horizontal scroll = 0
+P:3EE9:: vertical scroll
+P:3EEC:: set flag to let main loop run once
+P:3EEF:: pull Y, X, A
+P:3EF4:irq
+G:2000:$
+
+NesInternalRam:0:vram_buf_hi:
+NesInternalRam:10:vram_buf_lo:
+NesInternalRam:20:vram_buf_val:
+NesInternalRam:30:user_palette:
+NesInternalRam:40:vram_offset:
+NesInternalRam:42:vram_copy_addr:
+NesInternalRam:44:mode:
+NesInternalRam:45:runmain:
+NesInternalRam:46:pad_status:
+NesInternalRam:47:prev_pad_status:
+NesInternalRam:48:vram_count:
+NesInternalRam:49:temp:
+NesInternalRam:4A:delay_left:
+NesInternalRam:4B:brush_size:
+NesInternalRam:4C:paint_color:
+NesInternalRam:4D:cursor_x:
+NesInternalRam:4E:cursor_y:
+NesInternalRam:4F:blink_timer:
+NesInternalRam:50:pal_edit_cursor_pos:
+NesInternalRam:51:pal_edit_subpal:
+NesInternalRam:52:prev_mode:
+NesInternalRam:53:active_subpalette:
+NesInternalRam:54:vram_ready:
+NesInternalRam:55:cursor_color_dirty:
+NesInternalRam:200:sprite_data:
+NesInternalRam:300:vram_copy:

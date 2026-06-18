@@ -1,0 +1,1160 @@
+	                            ; Kalle Paint (NES, ASM6)
+	                            
+	                            ; --- Constants -----------------------------------------------------------------------------------
+	                            
+	                            ; Note: "VRAM buffer" = what to update in VRAM on next VBlank.
+	                            
+	                            ; RAM
+	                            vram_buf_hi   equ $00    ; VRAM buffer - high bytes of addresses (16 bytes)
+	                            vram_buf_lo   equ $10    ; VRAM buffer - low bytes of addresses (16 bytes)
+	                            vram_buf_val  equ $20    ; VRAM buffer - values (16 bytes)
+	                            user_palette     equ $30    ; user palette (16 bytes; each $00-$3f; offsets 4/8/12 are unused)
+	                            vram_offset    equ $40    ; offset to name/attr table 0 and vram_copy (2 bytes, low first; 0-$3ff)
+	                            vram_copy_addr equ $42    ; address in vram_copy (2 bytes, low first; vram_copy...vram_copy+$3ff)
+	                            mode        equ $44    ; program mode: 0=sm brush, 1=lg brush, 2=attr edit, 3=pal edit
+	                            runmain     equ $45    ; run main loop? (flag; only MSB is important)
+	                            pad_status   equ $46    ; first joypad status (bits: A, B, select, start, up, down, left, right)
+	                            prev_pad_status equ $47    ; first joypad status on previous frame
+	                            vram_count    equ $48    ; number of entries in VRAM buffer (0-16)
+	                            temp        equ $49    ; temporary
+	                            delay_left   equ $4a    ; cursor move delay left (paint mode)
+	                            brush_size   equ $4b    ; cursor type (paint mode; 0=small, 1=big)
+	                            paint_color  equ $4c    ; paint color (paint mode; 0-3)
+	                            cursor_x     equ $4d    ; cursor X position (paint/attribute edit mode; 0-63)
+	                            cursor_y     equ $4e    ; cursor Y position (paint/attribute edit mode; 0-55)
+	                            blink_timer  equ $4f    ; cursor blink timer (attribute/palette editor)
+	                            pal_edit_cursor_pos equ $50    ; cursor position (palette editor; 0-3)
+	                            pal_edit_subpal equ $51    ; selected subpalette (palette editor; 0-3)
+	                            prev_mode   equ $52    ; previous mode (to return to after palette editor)
+	                            active_subpalette equ $53 ; currently active subpalette (1-3)
+	                            vram_ready  equ $54    ; VRAM buffer ready flag (1 = ready for NMI)
+	                            cursor_color_dirty equ $55 ; cursor color needs VRAM update (paint mode)
+	                            sprite_data     equ $0200  ; $100 bytes (see init_sprite_data for layout)
+	                            vram_copy    equ $0300  ; $400 bytes (copy of name/attribute table 0; must be at $xx00)
+	                            ; END RAM
+	                            
+	                            ; memory-mapped registers; see https://wiki.nesdev.org/w/index.php/PPU_registers
+	                            ppu_ctrl     equ $2000
+	                            ppu_mask     equ $2001
+	                            ppu_status   equ $2002
+	                            oam_addr     equ $2003
+	                            ppu_scroll   equ $2005
+	                            ppu_addr     equ $2006
+	                            ppu_data     equ $2007
+	                            dmcfreq     equ $4010
+	                            oam_dma      equ $4014
+	                            sndchn      equ $4015
+	                            joypad1     equ $4016
+	                            joypad2     equ $4017
+	                            
+	                            ; joypad bitmasks
+	                            pad_a       equ 1<<7                     ; A
+	                            pad_b       equ 1<<6                     ; B
+	                            pad_select      equ 1<<5                     ; select
+	                            pad_start      equ 1<<4                     ; start
+	                            pad_up       equ 1<<3                     ; up
+	                            pad_down       equ 1<<2                     ; down
+	                            pad_left       equ 1<<1                     ; left
+	                            pad_right       equ 1<<0                     ; right
+	                            
+	                            ; default user palette
+	                            def_bg_color  equ $0f  ; background (all subpalettes)
+	                            def_color_0a  equ $15  ; reds
+	                            def_color_0b  equ $25
+	                            def_color_0c  equ $35
+	                            def_color_1a  equ $18  ; yellows
+	                            def_color_1b  equ $28
+	                            def_color_1c  equ $38
+	                            def_color_2a  equ $1b  ; greens
+	                            def_color_2b  equ $2b
+	                            def_color_2c  equ $3b
+	                            def_color_3a  equ $12  ; blues
+	                            def_color_3b  equ $22
+	                            def_color_3c  equ $32
+	                            
+	                            ; user interface colors
+	                            pal_edit_bg_color  equ $0f  ; palette editor background (black)
+	                            pal_edit_txt_color equ $30  ; palette editor text (white)
+	                            blinkcol1   equ $00  ; blinking cursor 1
+	                            blinkcol2   equ $10  ; blinking cursor 2 (gray)
+	                            
+	                            ; sprite tile indexes (note: hexadecimal digits "0"-"F" must start at $00)
+	                            small_cursor_tile equ $10  ; small paint cursor
+	                            large_cursor_tile  equ $11  ; large paint cursor
+	                            attr_cursor_tile equ $12  ; corner of attribute cursor
+	                            dotted_corner_tile equ $17 ; dotted corner for auto-attr indicator
+	                            cover_tile   equ $13  ; cover (palette editor)
+	                            pal_tile_1    equ $14  ; left  half of "Pal" (palette editor)
+	                            pal_tile_2    equ $15  ; right half of "Pal" (palette editor)
+	                            color_ind_tile  equ $16  ; color indicator (palette editor)
+	                            
+	                            ; misc
+	                            blink_rate   equ 4      ; attribute/palette editor cursor blink rate (0=fastest, 7=slowest)
+	                            das_delay       equ 15     ; frames to wait before auto-repeat kicks in
+	                            nav_delay_sm    equ 2      ; nav repeat delay (sm brush)
+	                            nav_delay_lg    equ 5      ; nav repeat delay (lg brush)
+	                            nav_delay_ae    equ 11     ; nav repeat delay (attr editor)
+	                            draw_delay_sm   equ 5      ; draw repeat delay (sm brush)
+	                            draw_delay_lg   equ 11     ; draw repeat delay (lg brush)
+	                            draw_delay_ae   equ 23     ; draw repeat delay (attr editor)
+	                            v_scroll     equ 0      ; PPU vertical scroll value (VRAM $2000 is at the top of visible area)
+	                            
+	                            ; --- iNES header ---------------------------------------------------------------------------------
+	                            
+	                                        ; see https://wiki.nesdev.org/w/index.php/INES
+	                                        base $0000
+00000 4E 45 53 1A                           db "NES", $1a            ; file id
+00004 01 01                                 db 1, 1                  ; 16 KiB PRG ROM, 8 KiB CHR ROM
+00006 01 00                                 db %00000001, %00000000  ; NROM mapper, vertical name table mirroring
+00008 00 00 00 00 00 00 00 00               pad $0010, $00           ; unused
+00010                           
+00010                           ; --- Start of PRG ROM ----------------------------------------------------------------------------
+00010                           
+00010                                       ; only use last 2 KiB of CPU address space
+00010                                       base $c000
+0C000 FF FF FF FF FF FF FF FF..             pad $f800, $ff
+0F800                           
+0F800                           ; --- Initialization and main loop ----------------------------------------------------------------
+0F800                           
+0F800                           macro wait_vblank
+0F800                                       bit $2002  ; wait until next VBlank starts
+0F800                           -           bit $2002
+0F800                                       bpl -
+0F800                           endm
+0F800                           
+0F800                           reset       ; initialize the NES; see https://wiki.nesdev.org/w/index.php/Init_code
+0F800 78                                    sei             ; ignore IRQs
+0F801 D8                                    cld             ; disable decimal mode
+0F802 A2 40                                 ldx #%01000000
+0F804 8E 17 40                              stx $4017     ; disable APU frame IRQ
+0F807 A2 FF                                 ldx #$ff
+0F809 9A                                    txs             ; initialize stack pointer
+0F80A E8                                    inx
+0F80B 8E 00 20                              stx $2000     ; disable NMI
+0F80E 8E 01 20                              stx $2001     ; disable rendering
+0F811 8E 10 40                              stx $4010     ; disable DMC IRQs
+0F814 8E 15 40                              stx $4015      ; disable sound channels
+0F817                           
+0F817 2C 02 20 2C 02 20 10 FB               wait_vblank
+0F81F                           
+0F81F A9 00                                 lda #$00             ; clear zero page and vram_copy
+0F821 AA                                    tax
+0F822 95 00                     -           sta $00,x
+0F824 9D 00 03                              sta $0300,x
+0F827 9D 00 04                              sta $0300+$100,x
+0F82A 9D 00 05                              sta $0300+$200,x
+0F82D 9D 00 06                              sta $0300+$300,x
+0F830 E8                                    inx
+0F831 D0 EF                                 bne -
+0F833                           
+0F833 A2 0F                                 ldx #(16-1)        ; init user palette
+0F835 BD 40 F9                  -           lda init_palette,x
+0F838 95 30                                 sta $30,x
+0F83A CA                                    dex
+0F83B 10 F8                                 bpl -
+0F83D                           
+0F83D A2 5F                                 ldx #(24*4-1)      ; init sprite data
+0F83F BD 60 F9                  -           lda init_sprite_data,x
+0F842 9D 00 02                              sta $0200,x
+0F845 CA                                    dex
+0F846 10 F7                                 bpl -
+0F848                           
+0F848 A2 04                                 ldx #(1*4)       ; show impact box sprites (#1-#4)
+0F84A A0 04                                 ldy #4
+0F84C BD 60 F9                  -           lda init_sprite_data,x
+0F84F 9D 00 02                              sta $0200,x
+0F852 E8                                    inx
+0F853 E8                                    inx
+0F854 E8                                    inx
+0F855 E8                                    inx
+0F856 88                                    dey
+0F857 D0 F3                                 bne -
+0F859                           
+0F859 A2 14                                 ldx #(5*4)       ; hide remaining sprites (#5-#63)
+0F85B A0 3B                                 ldy #59
+0F85D 20 9A FE                              jsr hide_sprites  ; X = first byte index, Y = count
+0F860                           
+0F860 A9 1E                                 lda #30         ; init misc vars
+0F862 85 4D                                 sta $4d
+0F864 A9 1A                                 lda #26
+0F866 85 4E                                 sta $4e
+0F868 A9 00                                 lda #0
+0F86A 85 44                                 sta $44
+0F86C 85 4B                                 sta $4b
+0F86E A9 01                                 lda #1
+0F870 85 4C                                 sta $4c
+0F872 85 53                                 sta $53
+0F874 85 55                                 sta $55
+0F876                           
+0F876 2C 02 20 2C 02 20 10 FB               wait_vblank
+0F87E                           
+0F87E A9 3F                                 lda #$3f           ; init PPU palette
+0F880 8D 06 20                              sta $2006
+0F883 A2 00                                 ldx #$00
+0F885 8E 06 20                              stx $2006
+0F888 BD 40 F9                  -           lda init_palette,x
+0F88B 8D 07 20                              sta $2007
+0F88E E8                                    inx
+0F88F E0 20                                 cpx #32
+0F891 D0 F5                                 bne -
+0F893                           
+0F893 A9 20                                 lda #$20     ; clear name/attribute table 0 ($400 bytes)
+0F895 8D 06 20                              sta $2006
+0F898 A9 00                                 lda #$00
+0F89A 8D 06 20                              sta $2006
+0F89D A0 04                                 ldy #4
+0F89F AA                        --          tax
+0F8A0 8D 07 20                  -           sta $2007
+0F8A3 E8                                    inx
+0F8A4 D0 FA                                 bne -
+0F8A6 88                                    dey
+0F8A7 D0 F6                                 bne --
+0F8A9                           
+0F8A9 2C 02 20                              bit $2002  ; reset ppu_addr/ppu_scroll latch
+0F8AC A9 00                                 lda #$00       ; reset PPU address and set scroll
+0F8AE 8D 06 20                              sta $2006
+0F8B1 8D 06 20                              sta $2006
+0F8B4 8D 05 20                              sta $2005
+0F8B7 A9 00                                 lda #0
+0F8B9 8D 05 20                              sta $2005
+0F8BC                           
+0F8BC 2C 02 20 2C 02 20 10 FB               wait_vblank
+0F8C4                           
+0F8C4 A9 88                                 lda #%10001000  ; NMI, 8*8-px sprites, pattern table 0 for BG and 1 for sprites,
+0F8C6 8D 00 20                              sta $2000     ; 1-byte VRAM address auto-increment, name table 0
+0F8C9                           
+0F8C9 A9 1E                                 lda #%00011110  ; show BG & sprites on entire screen,
+0F8CB 8D 01 20                              sta $2001     ; don't use R/G/B de-emphasis or grayscale mode
+0F8CE                           
+0F8CE 24 45                     mainloop    bit $45      ; the main loop
+0F8D0 10 FC                                 bpl mainloop     ; wait until NMI routine has run
+0F8D2 46 45                                 lsr $45      ; clear flag to prevent main loop from running until after next NMI
+0F8D4                           
+0F8D4 A9 00                                 lda #0
+0F8D6 85 54                                 sta $54
+0F8D8 85 48                                 sta $48
+0F8DA                           
+0F8DA A5 46                                 lda $46    ; store previous joypad status
+0F8DC 85 47                                 sta $47
+0F8DE                           
+0F8DE A2 01                                 ldx #$01        ; read first joypad
+0F8E0 86 46                                 stx $46   ; initialize; set LSB of variable to detect end of loop
+0F8E2 8E 16 40                              stx $4016
+0F8E5 CA                                    dex
+0F8E6 8E 16 40                              stx $4016
+0F8E9 18                        -           clc             ; read 8 buttons; each one = OR of two LSBs
+0F8EA AD 16 40                              lda $4016
+0F8ED 29 03                                 and #%00000011
+0F8EF F0 01                                 beq +
+0F8F1 38                                    sec
+0F8F2 26 46                     +           rol $46
+0F8F4 90 F3                                 bcc -
+0F8F6                           
+0F8F6 A9 3F                                 lda #$3f             ; tell NMI routine to update blinking cursor/bg in VRAM
+0F8F8 85 00                                 sta $00+0
+0F8FA                                       
+0F8FA A5 44                                 lda $44             ; check if we are in attribute editor
+0F8FC C9 02                                 cmp #2
+0F8FE F0 13                                 beq blink_bg
+0F900                           
+0F900                                       ; Default: blinking cursor (Sprite Palette 0, Color 3)
+0F900 A9 13                                 lda #(4*4+3)
+0F902 85 10                                 sta $10+0
+0F904 A2 00                                 ldx #$00
+0F906 A5 4F                                 lda $4f
+0F908 29 10                                 and #(1<<4)
+0F90A F0 02                                 beq +
+0F90C A2 10                                 ldx #$10
+0F90E 86 20                     +           stx $20+0
+0F910 4C 30 F9                              jmp blink_done
+0F913                           
+0F913                           blink_bg    ; Attribute Editor: flash cursor color ($3F13) with active subpalette color
+0F913 A9 13                                 lda #$13
+0F915 85 10                                 sta $10+0
+0F917 A5 4F                                 lda $4f
+0F919 29 10                                 and #(1<<4)
+0F91B F0 07                                 beq +
+0F91D                                       ; Phase 1: Neutral cursor color (Light Gray)
+0F91D A9 10                                 lda #$10
+0F91F 85 20                                 sta $20+0
+0F921 4C 30 F9                              jmp blink_done
+0F924                           +           ; Phase 2: Active subpalette color
+0F924 A5 53                                 lda $53
+0F926 0A                                    asl a
+0F927 0A                                    asl a
+0F928 18                                    clc
+0F929 69 01                                 adc #1
+0F92B AA                                    tax
+0F92C B5 30                                 lda $30,x
+0F92E 85 20                                 sta $20+0
+0F930                           
+0F930 A9 01                     blink_done  lda #1               ; we have one entry
+0F932 85 48                                 sta $48
+0F934                           
+0F934 E6 4F                                 inc $4f  ; advance timer
+0F936 20 C0 F9                              jsr jump_engine  ; run code for the program mode we're in
+0F939                           
+0F939 A9 01                                 lda #1               ; signal that buffer is ready for NMI
+0F93B 85 54                                 sta $54
+0F93D                           
+0F93D 4C CE F8                              jmp mainloop
+0F940                           
+0F940                           init_palette ; initial palette
+0F940                                       ; background (also the initial user palette)
+0F940 0F 15 25 35                           db $0f, $15, $25, $35
+0F944 0F 18 28 38                           db $0f, $18, $28, $38
+0F948 0F 1B 2B 3B                           db $0f, $1b, $2b, $3b
+0F94C 0F 12 22 32                           db $0f, $12, $22, $32
+0F950                                       ; sprites
+0F950                                       ; 2nd color in all subpalettes: palette editor background
+0F950                                       ; 3rd color in all subpalettes: selected colors in palette editor
+0F950                                       ; 4th color in 1st subpalette : all cursors
+0F950                                       ; 4th color in 2nd subpalette : palette editor text
+0F950 0F 0F 0F 15                           db $0f, $0f, $0f,  $15
+0F954 0F 0F 15 30                           db $0f, $0f, $15, $30
+0F958 0F 0F 25 00                           db $0f, $0f, $25,         $00
+0F95C 0F 0F 35 30                           db $0f, $0f, $35, $30
+0F960                           
+0F960                           init_sprite_data ; initial sprite data (Y, tile, attributes, X for each sprite)
+0F960                                       ; paint mode
+0F960 FF 10 01 00                           db    $ff, $10, %00000001,    0  ; #0:  cursor
+0F964                                       ; attribute editor / paint impact indicator
+0F964 FF 12 00 00                           db    $ff, $12, %00000000,    0  ; #1:  cursor top left
+0F968 FF 12 40 00                           db    $ff, $12, %01000000,    0  ; #2:  cursor top right
+0F96C FF 12 80 00                           db    $ff, $12, %10000000,    0  ; #3:  cursor bottom left
+0F970 FF 12 C0 00                           db    $ff, $12, %11000000,    0  ; #4:  cursor bottom right
+0F974                                       ; palette editor
+0F974 FF 11 00 E8                           db    $ff,  $11, %00000000, 29*8  ; #5:  cursor
+0F978 AF 14 03 E0                           db 22*8-1,    $14, %00000011, 28*8  ; #6:  left  half of "Pal"
+0F97C AF 15 03 E8                           db 22*8-1,    $15, %00000011, 29*8  ; #7:  right half of "Pal"
+0F980 AF 00 03 F0                           db 22*8-1,         $00, %00000011, 30*8  ; #8:  subpalette number
+0F984 B7 0C 03 E0                           db 23*8-1,         $0c, %00000011, 28*8  ; #9:  "C"
+0F988 B7 00 03 E8                           db 23*8-1,         $00, %00000011, 29*8  ; #10: color number - 16s
+0F98C B7 00 03 F0                           db 23*8-1,         $00, %00000011, 30*8  ; #11: color number - ones
+0F990 BF 16 00 E8                           db 24*8-1,  $16, %00000000, 29*8  ; #12: color 0
+0F994 C7 16 01 E8                           db 25*8-1,  $16, %00000001, 29*8  ; #13: color 1
+0F998 CF 16 02 E8                           db 26*8-1,  $16, %00000010, 29*8  ; #14: color 2
+0F99C D7 16 03 E8                           db 27*8-1,  $16, %00000011, 29*8  ; #15: color 3
+0F9A0 BF 13 01 E0                           db 24*8-1,   $13, %00000001, 28*8  ; #16: cover (to left  of color 0)
+0F9A4 BF 13 01 F0                           db 24*8-1,   $13, %00000001, 30*8  ; #17: cover (to right of color 0)
+0F9A8 C7 13 01 E0                           db 25*8-1,   $13, %00000001, 28*8  ; #18: cover (to left  of color 1)
+0F9AC C7 13 01 F0                           db 25*8-1,   $13, %00000001, 30*8  ; #19: cover (to right of color 1)
+0F9B0 CF 13 01 E0                           db 26*8-1,   $13, %00000001, 28*8  ; #20: cover (to left  of color 2)
+0F9B4 CF 13 01 F0                           db 26*8-1,   $13, %00000001, 30*8  ; #21: cover (to right of color 2)
+0F9B8 D7 13 01 E0                           db 27*8-1,   $13, %00000001, 28*8  ; #22: cover (to left  of color 3)
+0F9BC D7 13 01 F0                           db 27*8-1,   $13, %00000001, 30*8  ; #23: cover (to right of color 3)
+0F9C0                           
+0F9C0 A6 44                     jump_engine  ldx $44           ; jump engine (run one sub depending on program mode)
+0F9C2 BD CB F9                              lda jump_table_hi,x  ; note: don't inline this sub
+0F9C5 48                                    pha                ; push target address minus one, high byte first
+0F9C6 BD CF F9                              lda jump_table_lo,x
+0F9C9 48                                    pha
+0F9CA 60                                    rts                ; pull address, low byte first; jump to that address plus one
+0F9CB                           
+0F9CB F9 F9 FB FD               jump_table_hi dh paint_mode-1, paint_mode-1, attr_editor-1, pal_editor-1  ; jump table - high bytes
+0F9CF D2 D2 94 3D               jump_table_lo dl paint_mode-1, paint_mode-1, attr_editor-1, pal_editor-1  ; jump table - low bytes
+0F9D3                           
+0F9D3                           ; --- Paint mode (code label prefix "pm") ---------------------------------------------------------
+0F9D3                           
+0F9D3 A5 47                     paint_mode   lda $47  ; select/B/start logic
+0F9D5 29 70                                 and #(1<<5|1<<6|1<<4)
+0F9D7 D0 6C                                 bne pm_arrows     ; if any pressed on previous frame, ignore them all
+0F9D9                           
+0F9D9 A5 46                                 lda $46    ; if start pressed, switch to palette editor
+0F9DB 29 10                                 and #1<<4
+0F9DD F0 25                                 beq +
+0F9DF A5 44                                 lda $44          ; save current mode
+0F9E1 85 52                                 sta $52
+0F9E3 A9 03                                 lda #3           ; mode 3 = palette editor
+0F9E5 85 44                                 sta $44
+0F9E7 A9 FF                                 lda #$ff         ; hide paint cursor sprite
+0F9E9 8D 00 02                              sta $0200+0+0
+0F9EC A2 04                                 ldx #(1*4)       ; hide impact box sprites (#1-#4)
+0F9EE A0 04                                 ldy #4
+0F9F0 20 9A FE                              jsr hide_sprites
+0F9F3 A2 14                                 ldx #(5*4)       ; show palette editor sprites (#5-#23)
+0F9F5 BD 60 F9                  -           lda init_sprite_data,x
+0F9F8 9D 00 02                              sta $0200,x
+0F9FB E8                                    inx
+0F9FC E8                                    inx
+0F9FD E8                                    inx
+0F9FE E8                                    inx
+0F9FF E0 60                                 cpx #(24*4)
+0FA01 D0 F2                                 bne -
+0FA03 60                                    rts              ; return to main loop
+0FA04                           
+0FA04 A5 46                     +           lda $46    ; if select pressed, switch to next mode
+0FA06 29 20                                 and #1<<5
+0FA08 F0 29                                 beq +
+0FA0A A5 44                                 lda $44          ; check if we are in small or large brush mode
+0FA0C F0 16                                 beq ++            ; if small (0), go to large (1)
+0FA0E                           
+0FA0E                                       ; we are in large brush mode (1), switch to attribute editor (2)
+0FA0E A9 02                                 lda #2           ; mode 2 = attribute editor
+0FA10 85 44                                 sta $44
+0FA12 A9 FF                                 lda #$ff         ; hide paint cursor sprite
+0FA14 8D 00 02                              sta $0200+0+0
+0FA17 A9 3C                                 lda #%00111100   ; make cursor coordinates a multiple of four
+0FA19 25 4D                                 and $4d
+0FA1B 85 4D                                 sta $4d
+0FA1D A9 3C                                 lda #%00111100
+0FA1F 25 4E                                 and $4e
+0FA21 85 4E                                 sta $4e
+0FA23 60                                    rts              ; return to main loop
+0FA24                           
+0FA24 A9 01                     ++          lda #1           ; mode 1 = large brush
+0FA26 85 44                                 sta $44
+0FA28 85 4B                                 sta $4b
+0FA2A 46 4D                                 lsr $4d      ; make coordinates even for large brush
+0FA2C 06 4D                                 asl $4d
+0FA2E 46 4E                                 lsr $4e
+0FA30 06 4E                                 asl $4e
+0FA32 60                                    rts
+0FA33                           
+0FA33 A5 46                     +           lda $46    ; if B pressed, increment paint color (0-3)
+0FA35 29 40                                 and #1<<6
+0FA37 F0 0C                                 beq pm_arrows
+0FA39 A6 4C                                 ldx $4c
+0FA3B E8                                    inx
+0FA3C 8A                                    txa
+0FA3D 29 03                                 and #%00000011
+0FA3F 85 4C                                 sta $4c
+0FA41 A9 01                                 lda #1
+0FA43 85 55                                 sta $55
+0FA45                           
+0FA45 A5 46                     pm_arrows    lda $46    ; arrow logic
+0FA47 29 0F                                 and #(1<<3|1<<2|1<<1|1<<0)
+0FA49 F0 0E                                 beq pm_no_arrows
+0FA4B                                       
+0FA4B AA                                    tax               ; save current arrow status
+0FA4C A5 47                                 lda $47
+0FA4E 29 0F                                 and #(1<<3|1<<2|1<<1|1<<0)
+0FA50 D0 0B                                 bne pm_repeat     ; if any arrows were already held, jump to repeat logic
+0FA52                                       
+0FA52                                       ; Fresh press (DAS)
+0FA52 A9 0F                                 lda #15
+0FA54 85 4A                                 sta $4a
+0FA56 4C 6A FA                              jmp pm_move_cursor
+0FA59                           
+0FA59 85 4A                     pm_no_arrows sta $4a    ; if none pressed, clear cursor move delay
+0FA5B F0 4E                                 beq paint_mode_2   ; unconditional; ends with rts
+0FA5D                           
+0FA5D A5 4A                     pm_repeat    lda $4a    ; else if delay > 0, decrement it and exit
+0FA5F F0 04                                 beq +
+0FA61 C6 4A                                 dec $4a
+0FA63 10 46                                 bpl paint_mode_2   ; unconditional; ends with rts
+0FA65 20 EA FC                  +           jsr get_dynamic_delay
+0FA68 85 4A                                 sta $4a
+0FA6A                           
+0FA6A A5 46                     pm_move_cursor lda $46    ; check horizontal arrows
+0FA6C 4A                                    lsr a
+0FA6D B0 05                                 bcs +
+0FA6F 4A                                    lsr a
+0FA70 B0 09                                 bcs ++
+0FA72 90 10                                 bcc pm_check_vert  ; unconditional
+0FA74 A5 4D                     +           lda $4d      ; right
+0FA76 38                                    sec
+0FA77 65 4B                                 adc $4b
+0FA79 10 05                                 bpl +++          ; unconditional
+0FA7B A5 4D                     ++          lda $4d      ; left
+0FA7D 18                                    clc
+0FA7E E5 4B                                 sbc $4b
+0FA80 29 3F                     +++         and #%00111111   ; store horizontal position
+0FA82 85 4D                                 sta $4d
+0FA84                           
+0FA84 A5 46                     pm_check_vert lda $46    ; check vertical arrows
+0FA86 4A                                    lsr a
+0FA87 4A                                    lsr a
+0FA88 4A                                    lsr a
+0FA89 B0 05                                 bcs +
+0FA8B 4A                                    lsr a
+0FA8C B0 0F                                 bcs ++
+0FA8E 90 1B                                 bcc paint_mode_2   ; unconditional
+0FA90 A5 4E                     +           lda $4e      ; down
+0FA92 38                                    sec
+0FA93 65 4B                                 adc $4b
+0FA95 C9 38                                 cmp #56
+0FA97 D0 10                                 bne +++
+0FA99 A9 00                                 lda #0
+0FA9B F0 0C                                 beq +++          ; unconditional
+0FA9D A5 4E                     ++          lda $4e      ; up
+0FA9F 18                                    clc
+0FAA0 E5 4B                                 sbc $4b
+0FAA2 10 05                                 bpl +++
+0FAA4 A9 38                                 lda #56
+0FAA6 18                                    clc
+0FAA7 E5 4B                                 sbc $4b
+0FAA9 85 4E                     +++         sta $4e      ; store vertical position
+0FAAB                           
+0FAAB                           paint_mode_2  ; paint mode, part 2
+0FAAB                           
+0FAAB                                       ; update cursor sprite
+0FAAB A5 4D                                 lda $4d        ; X pos
+0FAAD 0A                                    asl a
+0FAAE 0A                                    asl a
+0FAAF 8D 03 02                              sta $0200+0+3
+0FAB2 A5 4E                                 lda $4e        ; Y pos
+0FAB4 0A                                    asl a
+0FAB5 0A                                    asl a
+0FAB6 38                                    sec
+0FAB7 E9 01                                 sbc #1             ; screen-relative (line 0 = nametable line 0)
+0FAB9 8D 00 02                              sta $0200+0+0
+0FABC A6 4B                                 ldx $4b      ; tile
+0FABE BD 8B FB                              lda cursortiles,x
+0FAC1 8D 01 02                              sta $0200+0+1
+0FAC4                           
+0FAC4                                       ; update impact box sprites (#1-#4)
+0FAC4 A9 17                                 lda #$17
+0FAC6 8D 05 02                              sta $0200+1*4+1
+0FAC9 8D 09 02                              sta $0200+2*4+1
+0FACC 8D 0D 02                              sta $0200+3*4+1
+0FACF 8D 11 02                              sta $0200+4*4+1
+0FAD2                           
+0FAD2 A5 4D                                 lda $4d
+0FAD4 29 FC                                 and #%11111100
+0FAD6 0A                                    asl a
+0FAD7 0A                                    asl a
+0FAD8 8D 07 02                              sta $0200+4+3 ; #1 X
+0FADB 8D 0F 02                              sta $0200+3*4+3 ; #3 X
+0FADE 69 08                                 adc #8             ; carry is always clear
+0FAE0 8D 0B 02                              sta $0200+2*4+3 ; #2 X
+0FAE3 8D 13 02                              sta $0200+4*4+3 ; #4 X
+0FAE6                                       
+0FAE6 A5 4E                                 lda $4e
+0FAE8 29 FC                                 and #%11111100
+0FAEA 0A                                    asl a
+0FAEB 0A                                    asl a
+0FAEC 38                                    sec
+0FAED E9 01                                 sbc #1             ; screen-relative (line 0 = nametable line 0)
+0FAEF 8D 04 02                              sta $0200+4+0 ; #1 Y
+0FAF2 8D 08 02                              sta $0200+2*4+0 ; #2 Y
+0FAF5 69 08                                 adc #8             ; carry is always clear
+0FAF7 8D 0C 02                              sta $0200+3*4+0 ; #3 Y
+0FAFA 8D 10 02                              sta $0200+4*4+0 ; #4 Y
+0FAFD                           
+0FAFD A5 55                                 lda $55
+0FAFF F0 29                                 beq ++
+0FB01 A6 4C                                 ldx $4c       ; color 0 is common to all subpalettes
+0FB03 F0 07                                 beq +
+0FB05 A5 53                                 lda $53
+0FB07 0A                                    asl a
+0FB08 0A                                    asl a
+0FB09 05 4C                                 ora $4c
+0FB0B AA                                    tax
+0FB0C B5 30                     +           lda $30,x        ; cursor color -> A
+0FB0E 48                                    pha                  ; append to VRAM buffer
+0FB0F A6 48                                 ldx $48
+0FB11 E0 10                                 cpx #16
+0FB13 B0 14                                 bcs +
+0FB15 A9 3F                                 lda #$3f
+0FB17 95 00                                 sta $00,x
+0FB19 A9 17                                 lda #$17             ; palette 1 color 3
+0FB1B 95 10                                 sta $10,x
+0FB1D 68                                    pla
+0FB1E 95 20                                 sta $20,x
+0FB20 E6 48                                 inc $48
+0FB22 A9 00                                 lda #0
+0FB24 85 55                                 sta $55
+0FB26 4C 2A FB                              jmp ++
+0FB29 68                        +           pla
+0FB2A A5 46                     ++          lda $46  ; if A not pressed, we are done
+0FB2C 29 80                                 and #1<<7
+0FB2E F0 5A                                 beq rts_label
+0FB30                           
+0FB30                                       ; edit one byte (tile) in vram_copy and tell NMI routine to update it to VRAM
+0FB30                           
+0FB30                                       ; compute offset to vram_copy and VRAM $2000;
+0FB30                                       ; bits: cursor_y = 00ABCDEF, cursor_x = 00abcdef,
+0FB30                                       ; -> vram_offset = 000000AB CDEabcde
+0FB30 A5 4E                                 lda $4e
+0FB32 4A                                    lsr a           ; A = 00ABCDE (Tile Y)
+0FB33 85 49                                 sta $49
+0FB35 4A                                    lsr a
+0FB36 4A                                    lsr a
+0FB37 4A                                    lsr a           ; A = 000000AB
+0FB38 85 41                                 sta $40+1
+0FB3A A5 49                                 lda $49
+0FB3C 29 07                                 and #%00000111  ; A = 00000CDE
+0FB3E 0A                                    asl a
+0FB3F 0A                                    asl a
+0FB40 0A                                    asl a
+0FB41 0A                                    asl a
+0FB42 0A                                    asl a           ; A = CDE00000
+0FB43 85 49                                 sta $49
+0FB45 A5 4D                                 lda $4d
+0FB47 4A                                    lsr a           ; A = 00abcde
+0FB48 05 49                                 ora $49
+0FB4A 85 40                                 sta $40+0 ; vram_offset+0 = CDEabcde
+0FB4C                           
+0FB4C 20 C5 FC                              jsr get_vram_copy_addr  ; get vram_copy_addr
+0FB4F A5 4B                                 lda $4b
+0FB51 F0 08                                 beq +
+0FB53                           
+0FB53 A6 4C                                 ldx $4c    ; large brush -> replace entire byte (tile) with a solid color
+0FB55 BD 8D FB                              lda solid_tiles,x
+0FB58 4C 80 FB                              jmp update_tile
+0FB5B                           
+0FB5B                           +           ; small brush -> replace a bit pair (pixel) within the original byte
+0FB5B A0 00                                 ldy #0               ; original byte -> stack
+0FB5D B1 42                                 lda ($42),y
+0FB5F 48                                    pha
+0FB60 A5 4D                                 lda $4d          ; pixel position within tile (0-3) -> X
+0FB62 4A                                    lsr a
+0FB63 A5 4E                                 lda $4e
+0FB65 2A                                    rol a
+0FB66 29 03                                 and #%00000011
+0FB68 AA                                    tax
+0FB69 BD 91 FB                              lda pixel_masks,x     ; AND mask for clearing a bit pair -> temp
+0FB6C 49 FF                                 eor #%11111111
+0FB6E 85 49                                 sta $49
+0FB70 A4 4C                                 ldy $4c       ; OR mask for changing a cleared bit pair -> X
+0FB72 B9 8D FB                              lda solid_tiles,y
+0FB75 3D 91 FB                              and pixel_masks,x
+0FB78 AA                                    tax
+0FB79 68                                    pla                  ; pull original byte, clear bit pair and change it
+0FB7A 25 49                                 and $49
+0FB7C 86 49                                 stx $49
+0FB7E 05 49                                 ora $49
+0FB80                           
+0FB80 A0 00                     update_tile  ldy #0               ; update byte in vram_copy
+0FB82 91 42                                 sta ($42),y
+0FB84 20 D1 FC                              jsr to_vram_buf        ; tell NMI routine to update A to VRAM
+0FB87 20 0F FD                              jsr auto_update_attribute ; update attribute for the current 16x16 area
+0FB8A 60                        rts_label    rts                  ; return to main loop
+0FB8B                           
+0FB8B 10 11                     cursortiles db $10, $11                     ; brush size -> cursor tile
+0FB8D 00 55 AA FF               solid_tiles  db %00000000, %01010101, %10101010, %11111111  ; tiles of solid color 0-3
+0FB91 C0 30 0C 03               pixel_masks  db %11000000, %00110000, %00001100, %00000011  ; bitmasks for pixels within tile index
+0FB95                           
+0FB95                           ; --- Attribute editor (code label prefix "ae") ---------------------------------------------------
+0FB95                           
+0FB95 A5 47                     attr_editor  lda $47  ; surgical debounce for mode-switching buttons
+0FB97 29 70                                 and #(1<<4|1<<5|1<<6)
+0FB99 D0 5C                                 bne ae_arrows
+0FB9B                           
+0FB9B A5 46                                 lda $46      ; if start pressed, switch to palette editor
+0FB9D 29 10                                 and #1<<4
+0FB9F F0 20                                 beq +
+0FBA1 A5 44                                 lda $44          ; save current mode
+0FBA3 85 52                                 sta $52
+0FBA5 A9 03                                 lda #3           ; mode 3 = palette editor
+0FBA7 85 44                                 sta $44
+0FBA9 A2 04                                 ldx #(1*4)       ; hide attribute editor sprites (#1-#4)
+0FBAB A0 04                                 ldy #4
+0FBAD 20 9A FE                              jsr hide_sprites    ; X = first byte index, Y = count
+0FBB0 A2 14                                 ldx #(5*4)       ; show palette editor sprites (#5-#23)
+0FBB2 BD 60 F9                  -           lda init_sprite_data,x
+0FBB5 9D 00 02                              sta $0200,x
+0FBB8 E8                                    inx
+0FBB9 E8                                    inx
+0FBBA E8                                    inx
+0FBBB E8                                    inx
+0FBBC E0 60                                 cpx #(24*4)
+0FBBE D0 F2                                 bne -
+0FBC0 60                                    rts              ; return to main loop
+0FBC1                           
+0FBC1 A5 46                     +           lda $46      ; if select pressed, switch back to paint mode (small brush)
+0FBC3 29 20                                 and #1<<5
+0FBC5 F0 1E                                 beq +
+0FBC7 A2 04                                 ldx #(1*4)         ; re-init impact box sprites (#1-#4)
+0FBC9 A0 04                                 ldy #4
+0FBCB BD 60 F9                  -           lda init_sprite_data,x
+0FBCE 9D 00 02                              sta $0200,x
+0FBD1 E8                                    inx
+0FBD2 E8                                    inx
+0FBD3 E8                                    inx
+0FBD4 E8                                    inx
+0FBD5 88                                    dey
+0FBD6 D0 F3                                 bne -
+0FBD8 A9 00                                 lda #0             ; mode 0 = small brush
+0FBDA 85 44                                 sta $44
+0FBDC 85 4B                                 sta $4b
+0FBDE AD 60 F9                              lda init_sprite_data+0+0  ; show paint cursor sprite
+0FBE1 8D 00 02                              sta $0200+0+0
+0FBE4 60                                    rts                ; return to main loop
+0FBE5                           
+0FBE5 A5 46                     +           lda $46      ; if B pressed, cycle the active subpalette
+0FBE7 29 40                                 and #1<<6
+0FBE9 F0 0C                                 beq ae_arrows
+0FBEB A6 53                                 ldx $53
+0FBED E8                                    inx
+0FBEE 8A                                    txa
+0FBEF 29 03                                 and #%00000011
+0FBF1 85 53                                 sta $53
+0FBF3 A9 01                                 lda #1
+0FBF5 85 55                                 sta $55
+0FBF7                                       ; fall through to ae_arrows
+0FBF7                           
+0FBF7 A5 46                     ae_arrows    lda $46    ; arrow logic
+0FBF9 29 0F                                 and #(1<<3|1<<2|1<<1|1<<0)
+0FBFB F0 0E                                 beq ae_no_arrows
+0FBFD                                       
+0FBFD AA                                    tax               ; save current arrow status
+0FBFE A5 47                                 lda $47
+0FC00 29 0F                                 and #(1<<3|1<<2|1<<1|1<<0)
+0FC02 D0 0B                                 bne ae_repeat     ; if any arrows were already held, jump to repeat logic
+0FC04                                       
+0FC04                                       ; Fresh press (DAS)
+0FC04 A9 0F                                 lda #15
+0FC06 85 4A                                 sta $4a
+0FC08 4C 1C FC                              jmp ae_move_cursor
+0FC0B                           
+0FC0B 85 4A                     ae_no_arrows sta $4a    ; if none pressed, clear cursor move delay
+0FC0D F0 47                                 beq ae_check_stamp
+0FC0F                           
+0FC0F A5 4A                     ae_repeat    lda $4a    ; else if delay > 0, decrement it and exit
+0FC11 F0 04                                 beq +
+0FC13 C6 4A                                 dec $4a
+0FC15 10 3F                                 bpl ae_check_stamp
+0FC17 20 EA FC                  +           jsr get_dynamic_delay
+0FC1A 85 4A                                 sta $4a
+0FC1C                           
+0FC1C A5 46                     ae_move_cursor lda $46    ; check horizontal arrows
+0FC1E 4A                                    lsr a
+0FC1F B0 05                                 bcs +
+0FC21 4A                                    lsr a
+0FC22 B0 08                                 bcs ++
+0FC24 90 0E                                 bcc ae_check_vert  ; unconditional
+0FC26 A5 4D                     +           lda $4d      ; right
+0FC28 69 03                                 adc #(4-1)       ; carry is always set
+0FC2A 90 04                                 bcc +++          ; unconditional
+0FC2C A5 4D                     ++          lda $4d      ; left
+0FC2E E9 04                                 sbc #4           ; carry is always set
+0FC30 29 3F                     +++         and #%00111111   ; store horizontal position
+0FC32 85 4D                                 sta $4d
+0FC34 A5 46                     ae_check_vert lda $46    ; check vertical arrows
+0FC36 4A                                    lsr a
+0FC37 4A                                    lsr a
+0FC38 4A                                    lsr a
+0FC39 B0 05                                 bcs +
+0FC3B 4A                                    lsr a
+0FC3C B0 0E                                 bcs ++
+0FC3E 90 16                                 bcc ae_check_stamp  ; unconditional
+0FC40 A5 4E                     +           lda $4e      ; down
+0FC42 69 03                                 adc #(4-1)       ; carry is always set
+0FC44 C9 38                                 cmp #56
+0FC46 D0 0C                                 bne +++
+0FC48 A9 00                                 lda #0
+0FC4A F0 08                                 beq +++          ; unconditional
+0FC4C A5 4E                     ++          lda $4e      ; up
+0FC4E E9 04                                 sbc #4           ; carry is always set
+0FC50 10 02                                 bpl +++
+0FC52 A9 34                                 lda #(56-4)
+0FC54 85 4E                     +++         sta $4e      ; store vertical position
+0FC56                           
+0FC56 A5 46                     ae_check_stamp lda $46   ; if A pressed, stamp the active subpalette
+0FC58 29 80                                 and #1<<7
+0FC5A F0 03                                 beq attr_editor_2
+0FC5C 20 0F FD                              jsr auto_update_attribute
+0FC5F                           
+0FC5F A9 12                     attr_editor_2 lda #$12
+0FC61 8D 05 02                              sta $0200+1*4+1
+0FC64 8D 09 02                              sta $0200+2*4+1
+0FC67 8D 0D 02                              sta $0200+3*4+1
+0FC6A 8D 11 02                              sta $0200+4*4+1
+0FC6D A5 4D                                 lda $4d        ; update cursor sprite X
+0FC6F 0A                                    asl a
+0FC70 0A                                    asl a
+0FC71 8D 07 02                              sta $0200+4+3
+0FC74 8D 0F 02                              sta $0200+3*4+3
+0FC77 69 08                                 adc #8             ; carry is always clear
+0FC79 8D 0B 02                              sta $0200+2*4+3
+0FC7C 8D 13 02                              sta $0200+4*4+3
+0FC7F A5 4E                                 lda $4e        ; update cursor sprite Y
+0FC81 0A                                    asl a
+0FC82 0A                                    asl a
+0FC83 38                                    sec
+0FC84 E9 01                                 sbc #1             ; screen-relative (line 0 = nametable line 0)
+0FC86 8D 04 02                              sta $0200+4+0
+0FC89 8D 08 02                              sta $0200+2*4+0
+0FC8C 18                                    clc
+0FC8D 69 08                                 adc #8             ; ensure perfect 8-pixel alignment
+0FC8F 8D 0C 02                              sta $0200+3*4+0
+0FC92 8D 10 02                              sta $0200+4*4+0
+0FC95 60                                    rts                ; return to main loop
+0FC96                           
+0FC96 01 03                     bp_change_masks  db %00000001, %00000011  ; bit pair change masks (LSB or both LSB and MSB of each)
+0FC98 04 0C                                 db %00000100, %00001100
+0FC9A 10 30                                 db %00010000, %00110000
+0FC9C 40 C0                                 db %01000000, %11000000
+0FC9E                           
+0FC9E                           ; --- Subroutines used by both paint mode and attribute editor ------------------------------------
+0FC9E                           
+0FC9E A5 4E                     attr_bit_pos  lda $4e     ; position within attribute byte -> X (0/2/4/6)
+0FCA0 29 04                                 and #%00000100  ; bits: cursor_y = 00ABCDEF, cursor_x = 00abcdef -> X = 00000Dd0
+0FCA2 4A                                    lsr a
+0FCA3 AA                                    tax
+0FCA4 A5 4D                                 lda $4d
+0FCA6 29 04                                 and #%00000100
+0FCA8 C9 04                                 cmp #%00000100  ; bit -> carry
+0FCAA 8A                                    txa
+0FCAB 69 00                                 adc #0
+0FCAD 0A                                    asl a
+0FCAE AA                                    tax
+0FCAF 60                                    rts
+0FCB0                           
+0FCB0 A9 03                     attr_vram_offset lda #%00000011  ; get VRAM offset for attribute byte, fall through to next sub
+0FCB2 85 41                                 sta $40+1  ; bits: cursor_y = 00ABCDEF, cursor_x = 00abcdef
+0FCB4 A5 4E                                 lda $4e     ; -> vram_offset = $3c0 + 00ABCabc = 00000011 11ABCabc
+0FCB6 29 38                                 and #%00111000
+0FCB8 85 49                                 sta $49
+0FCBA A5 4D                                 lda $4d
+0FCBC 4A                                    lsr a
+0FCBD 4A                                    lsr a
+0FCBE 4A                                    lsr a
+0FCBF 05 49                                 ora $49
+0FCC1 09 C0                                 ora #%11000000
+0FCC3 85 40                                 sta $40+0  ; fall through to next sub
+0FCC5                           
+0FCC5 A5 40                     get_vram_copy_addr lda $40+0     ; get address within vram_copy
+0FCC7 85 42                                 sta $42+0  ; vram_copy + vram_offset -> vram_copy_addr (vram_copy must be at $xx00)
+0FCC9 A9 03                                 lda #>$0300
+0FCCB 18                                    clc
+0FCCC 65 41                                 adc $40+1
+0FCCE 85 43                                 sta $42+1
+0FCD0 60                                    rts
+0FCD1                           
+0FCD1 48                        to_vram_buf   pha               ; tell NMI routine to write A to VRAM $2000 + vram_offset
+0FCD2 A6 48                                 ldx $48
+0FCD4 E0 10                                 cpx #16
+0FCD6 B0 10                                 bcs +
+0FCD8 A9 20                                 lda #$20
+0FCDA 05 41                                 ora $40+1
+0FCDC 95 00                                 sta $00,x
+0FCDE A5 40                                 lda $40+0
+0FCE0 95 10                                 sta $10,x
+0FCE2 68                                    pla
+0FCE3 95 20                                 sta $20,x
+0FCE5 E6 48                                 inc $48
+0FCE7 60                                    rts
+0FCE8 68                        +           pla
+0FCE9 60                                    rts
+0FCEA                           
+0FCEA                           get_dynamic_delay
+0FCEA A5 44                                 lda $44
+0FCEC C9 02                                 cmp #2
+0FCEE F0 07                                 beq +
+0FCF0                                       ; Paint mode 0 or 1: check if A (draw) is held
+0FCF0 A5 46                                 lda $46
+0FCF2 29 80                                 and #1<<7
+0FCF4 4C FB FC                              jmp ++
+0FCF7                           +           ; Attr editor 2: check if A or B (stamp) is held
+0FCF7 A5 46                                 lda $46
+0FCF9 29 C0                                 and #(1<<7|1<<6)
+0FCFB F0 06                     ++          beq +++
+0FCFD                                       ; Drawing delay table
+0FCFD A6 44                                 ldx $44
+0FCFF BD 0C FD                              lda draw_delays,x
+0FD02 60                                    rts
+0FD03                           +++         ; Navigation delay table
+0FD03 A6 44                                 ldx $44
+0FD05 BD 09 FD                              lda nav_delays,x
+0FD08 60                                    rts
+0FD09                           
+0FD09 02 05 0B                  nav_delays   db 2, 5, 11
+0FD0C 05 0B 17                  draw_delays  db 5, 11, 23
+0FD0F                           
+0FD0F                           auto_update_attribute
+0FD0F 20 B0 FC                              jsr attr_vram_offset      ; sets vram_offset and vram_copy_addr
+0FD12 20 9E FC                              jsr attr_bit_pos          ; returns 0/2/4/6 in X
+0FD15                                       
+0FD15 E8                                    inx                       ; X = 1/3/5/7 for 2-bit mask
+0FD16 BD 96 FC                              lda bp_change_masks,x
+0FD19 49 FF                                 eor #%11111111            ; invert to clear bits
+0FD1B 85 49                                 sta $49
+0FD1D                                       
+0FD1D A0 00                                 ldy #0
+0FD1F B1 42                                 lda ($42),y    ; get current attribute byte from vram_copy
+0FD21 25 49                                 and $49                  ; clear the target quadrant bits
+0FD23 85 49                                 sta $49
+0FD25                                       
+0FD25 CA                                    dex                       ; X = 0/2/4/6 for shifting
+0FD26 A5 53                                 lda $53     ; get subpalette (0-3)
+0FD28 29 03                                 and #%00000011            ; safety
+0FD2A E0 00                                 cpx #0
+0FD2C F0 06                                 beq +
+0FD2E 0A                        -           asl a
+0FD2F 0A                                    asl a                     ; active_subpalette is bits 1-0, shift by 2 each iteration
+0FD30 CA                                    dex
+0FD31 CA                                    dex
+0FD32 D0 FA                                 bne -
+0FD34 05 49                     +           ora $49                  ; combine with other quadrants
+0FD36                                       
+0FD36 A0 00                                 ldy #0
+0FD38 91 42                                 sta ($42),y    ; update vram_copy
+0FD3A 20 D1 FC                              jsr to_vram_buf           ; queue VRAM update (uses vram_offset set by attr_vram_offset)
+0FD3D 60                                    rts
+0FD3E                           
+0FD3E                           ; --- Palette editor (code label prefix "pe") -----------------------------------------------------
+0FD3E                           
+0FD3E A5 47                     pal_editor   lda $47  ; if any button pressed on previous frame, ignore all
+0FD40 F0 03                                 beq +
+0FD42 4C 13 FE                              jmp pal_editor_2
+0FD45 A5 46                     +           lda $46
+0FD47 4A                                    lsr a
+0FD48 90 03                                 bcc +
+0FD4A 4C DE FD                              jmp pe_inc_1s      ; right
+0FD4D 4A                        +           lsr a
+0FD4E 90 03                                 bcc +
+0FD50 4C E6 FD                              jmp pe_dec_1s      ; left
+0FD53 4A                        +           lsr a
+0FD54 90 03                                 bcc +
+0FD56 4C CE FD                              jmp pe_down       ; down
+0FD59 4A                        +           lsr a
+0FD5A 90 03                                 bcc +
+0FD5C 4C D3 FD                              jmp pe_up         ; up
+0FD5F 4A                        +           lsr a
+0FD60 90 03                                 bcc +
+0FD62 4C 80 FD                              jmp pe_exit       ; start
+0FD65 4A                        +           lsr a
+0FD66 90 03                                 bcc +
+0FD68 4C C4 FD                              jmp pe_inc_subpal  ; select
+0FD6B A5 46                     +           lda $46
+0FD6D 29 40                                 and #1<<6
+0FD6F F0 03                                 beq +
+0FD71 4C 05 FE                              jmp pe_dec_16s     ; B
+0FD74 A5 46                     +           lda $46
+0FD76 29 80                                 and #1<<7
+0FD78 F0 03                                 beq +
+0FD7A 4C FB FD                              jmp pe_inc_16s     ; A
+0FD7D 4C 13 FE                  +           jmp pal_editor_2
+0FD80                           
+0FD80 A5 50                     pe_exit     lda $50
+0FD82 85 4C                                 sta $4c
+0FD84 A5 51                                 lda $51
+0FD86 85 53                                 sta $53
+0FD88 A9 01                                 lda #1
+0FD8A 85 55                                 sta $55
+0FD8C A2 14                                 ldx #(5*4)       ; exit palette editor (switch to previous mode)
+0FD8E A0 13                                 ldy #19          ; hide palette editor sprites (#5-#23)
+0FD90 20 9A FE                              jsr hide_sprites  ; X = first byte index, Y = count
+0FD93 A5 52                                 lda $52
+0FD95 85 44                                 sta $44         ; restore program mode
+0FD97 C9 02                                 cmp #2           ; if we were in paint mode (0 or 1)
+0FD99 B0 18                                 bcs +
+0FD9B AD 60 F9                              lda init_sprite_data+0+0  ; show paint cursor sprite
+0FD9E 8D 00 02                              sta $0200+0+0
+0FDA1 A2 04                                 ldx #(1*4)       ; show impact box sprites (#1-#4)
+0FDA3 A0 04                                 ldy #4
+0FDA5 BD 60 F9                  -           lda init_sprite_data,x
+0FDA8 9D 00 02                              sta $0200,x
+0FDAB E8                                    inx
+0FDAC E8                                    inx
+0FDAD E8                                    inx
+0FDAE E8                                    inx
+0FDAF 88                                    dey
+0FDB0 D0 F3                                 bne -
+0FDB2 60                                    rts
+0FDB3                           +           ; we were in attribute editor (2)
+0FDB3 A2 04                                 ldx #(1*4)
+0FDB5 BD 60 F9                  -           lda init_sprite_data,x
+0FDB8 9D 00 02                              sta $0200,x
+0FDBB E8                                    inx
+0FDBC E8                                    inx
+0FDBD E8                                    inx
+0FDBE E8                                    inx
+0FDBF E0 14                                 cpx #(5*4)
+0FDC1 D0 F2                                 bne -
+0FDC3 60                                    rts              ; return to main loop
+0FDC4                           
+0FDC4 A5 51                     pe_inc_subpal lda $51  ; increment subpalette (0 -> 1 -> 2 -> 3 -> 0)
+0FDC6 69 00                                 adc #0           ; carry is always set
+0FDC8 29 03                                 and #%00000011
+0FDCA 85 51                                 sta $51
+0FDCC 10 45                                 bpl pal_editor_2   ; unconditional
+0FDCE                           
+0FDCE A6 50                     pe_down      ldx $50  ; move down
+0FDD0 E8                                    inx
+0FDD1 10 03                                 bpl pe_store_pos   ; unconditional
+0FDD3 A6 50                     pe_up        ldx $50  ; move up
+0FDD5 CA                                    dex
+0FDD6 8A                        pe_store_pos  txa              ; store cursor pos
+0FDD7 29 03                                 and #%00000011
+0FDD9 85 50                                 sta $50
+0FDDB AA                                    tax
+0FDDC 10 35                                 bpl pal_editor_2   ; unconditional
+0FDDE                           
+0FDDE 20 8E FE                  pe_inc_1s     jsr user_pal_offset  ; increment ones
+0FDE1 B4 30                                 ldy $30,x
+0FDE3 C8                                    iny
+0FDE4 10 06                                 bpl pe_store_1s    ; unconditional
+0FDE6 20 8E FE                  pe_dec_1s     jsr user_pal_offset  ; decrement ones
+0FDE9 B4 30                                 ldy $30,x
+0FDEB 88                                    dey
+0FDEC 98                        pe_store_1s   tya              ; store ones
+0FDED 29 0F                                 and #%00001111
+0FDEF 85 49                                 sta $49
+0FDF1 B5 30                                 lda $30,x
+0FDF3 29 30                                 and #%00110000
+0FDF5 05 49                                 ora $49
+0FDF7 95 30                                 sta $30,x
+0FDF9 10 18                                 bpl pal_editor_2   ; unconditional
+0FDFB                           
+0FDFB 20 8E FE                  pe_inc_16s    jsr user_pal_offset  ; increment sixteens
+0FDFE B5 30                                 lda $30,x
+0FE00 18                                    clc
+0FE01 69 10                                 adc #$10
+0FE03 10 08                                 bpl pe_store_16s   ; unconditional
+0FE05 20 8E FE                  pe_dec_16s    jsr user_pal_offset  ; decrement sixteens
+0FE08 B5 30                                 lda $30,x
+0FE0A 38                                    sec
+0FE0B E9 10                                 sbc #$10
+0FE0D 29 3F                     pe_store_16s  and #%00111111   ; store sixteens
+0FE0F 95 30                                 sta $30,x
+0FE11 10 00                                 bpl pal_editor_2   ; unconditional
+0FE13                           
+0FE13 A5 51                     pal_editor_2  lda $51    ; palette editor, part 2
+0FE15 8D 21 02                              sta $0200+8*4+1  ; update tile of selected subpalette
+0FE18 A5 50                                 lda $50    ; update cursor Y position
+0FE1A 0A                                    asl a
+0FE1B 0A                                    asl a
+0FE1C 0A                                    asl a
+0FE1D 69 BF                                 adc #(24*8-1)      ; carry is always clear
+0FE1F 8D 14 02                              sta $0200+5*4+0
+0FE22 20 8E FE                              jsr user_pal_offset    ; update sixteens tile of color number
+0FE25 B5 30                                 lda $30,x
+0FE27 4A                                    lsr a
+0FE28 4A                                    lsr a
+0FE29 4A                                    lsr a
+0FE2A 4A                                    lsr a
+0FE2B 8D 29 02                              sta $0200+10*4+1
+0FE2E B5 30                                 lda $30,x       ; update ones tile of color number
+0FE30 29 0F                                 and #%00001111
+0FE32 8D 2D 02                              sta $0200+11*4+1
+0FE35                           
+0FE35                                       ; tell NMI routine to update 5 VRAM bytes
+0FE35 20 8E FE                              jsr user_pal_offset
+0FE38 48                                    pha
+0FE39 A6 48                                 ldx $48
+0FE3B E0 0B                                 cpx #11             ; room for 5?
+0FE3D B0 4D                                 bcs +
+0FE3F A9 3F                                 lda #$3f            ; selected color -> background palette
+0FE41 95 00                                 sta $00,x
+0FE43 68                                    pla
+0FE44 95 10                                 sta $10,x
+0FE46 A8                                    tay
+0FE47 B9 30 00                              lda $30,y
+0FE4A 95 20                                 sta $20,x
+0FE4C E8                                    inx
+0FE4D A9 3F                                 lda #$3f            ; 1st color of all subpalettes
+0FE4F 95 00                                 sta $00,x
+0FE51 A9 12                                 lda #(4*4+2)
+0FE53 95 10                                 sta $10,x
+0FE55 A5 30                                 lda $30+0
+0FE57 95 20                                 sta $20,x
+0FE59 E8                                    inx
+0FE5A A5 51                                 lda $51     ; subpalette offset in user palette -> Y
+0FE5C 0A                                    asl a
+0FE5D 0A                                    asl a
+0FE5E A8                                    tay
+0FE5F A9 3F                                 lda #$3f            ; 2nd color of selected subpalette
+0FE61 95 00                                 sta $00,x
+0FE63 A9 16                                 lda #(5*4+2)
+0FE65 95 10                                 sta $10,x
+0FE67 B9 31 00                              lda $30+1,y
+0FE6A 95 20                                 sta $20,x
+0FE6C E8                                    inx
+0FE6D A9 3F                                 lda #$3f            ; 3rd color of selected subpalette
+0FE6F 95 00                                 sta $00,x
+0FE71 A9 1A                                 lda #(6*4+2)
+0FE73 95 10                                 sta $10,x
+0FE75 B9 32 00                              lda $30+2,y
+0FE78 95 20                                 sta $20,x
+0FE7A E8                                    inx
+0FE7B A9 3F                                 lda #$3f            ; 4th color of selected subpalette
+0FE7D 95 00                                 sta $00,x
+0FE7F A9 1E                                 lda #(7*4+2)
+0FE81 95 10                                 sta $10,x
+0FE83 B9 33 00                              lda $30+3,y
+0FE86 95 20                                 sta $20,x
+0FE88 E8                                    inx
+0FE89 86 48                                 stx $48
+0FE8B 60                                    rts
+0FE8C 68                        +           pla
+0FE8D 60                                    rts
+0FE8E                           
+0FE8E A5 50                     user_pal_offset lda $50  ; offset to user palette (user_palette or VRAM $3f00-$3f0f) -> A, X
+0FE90 F0 06                                 beq +            ; if 1st color of any subpal, zero
+0FE92 A5 51                                 lda $51  ; else, subpalette * 4 + cursor pos
+0FE94 0A                                    asl a
+0FE95 0A                                    asl a
+0FE96 05 50                                 ora $50
+0FE98 AA                        +           tax
+0FE99 60                                    rts
+0FE9A                           
+0FE9A                           ; --- Subroutines used by many parts of the program -----------------------------------------------
+0FE9A                           
+0FE9A A9 FF                     hide_sprites lda #$ff       ; hide some sprites (X = first index on sprite page, Y = count)
+0FE9C 9D 00 02                  -           sta $0200,x
+0FE9F E8                                    inx
+0FEA0 E8                                    inx
+0FEA1 E8                                    inx
+0FEA2 E8                                    inx
+0FEA3 88                                    dey
+0FEA4 D0 F6                                 bne -
+0FEA6 60                                    rts
+0FEA7                           
+0FEA7                           ; --- Interrupt routines --------------------------------------------------------------------------
+0FEA7                           
+0FEA7 48                        nmi         pha            ; push A, X, Y
+0FEA8 8A                                    txa
+0FEA9 48                                    pha
+0FEAA 98                                    tya
+0FEAB 48                                    pha
+0FEAC 2C 02 20                              bit $2002  ; reset ppu_addr/ppu_scroll latch
+0FEAF A9 00                                 lda #$00       ; do OAM DMA
+0FEB1 8D 03 20                              sta $2003
+0FEB4 A9 02                                 lda #>$0200
+0FEB6 8D 14 40                              sta $4014
+0FEB9                           
+0FEB9 A5 54                                 lda $54    ; only update VRAM if main loop says it's ready
+0FEBB F0 1D                                 beq skip_vram
+0FEBD                           
+0FEBD A6 48                                 ldx $48    ; update VRAM from buffer
+0FEBF F0 13                                 beq nmi_done_vram
+0FEC1 CA                        nmi_loop    dex
+0FEC2 B5 00                                 lda $00,x
+0FEC4 8D 06 20                              sta $2006
+0FEC7 B5 10                                 lda $10,x
+0FEC9 8D 06 20                              sta $2006
+0FECC B5 20                                 lda $20,x
+0FECE 8D 07 20                              sta $2007
+0FED1 8A                                    txa
+0FED2 D0 ED                                 bne nmi_loop
+0FED4                           
+0FED4 A9 00                     nmi_done_vram lda #0
+0FED6 85 48                                 sta $48    ; reset count
+0FED8 85 54                                 sta $54   ; reset ready flag
+0FEDA                           
+0FEDA                           skip_vram   ; PROPER SCROLL RESET
+0FEDA A9 88                                 lda #%10001000    ; NMI enabled, Nametable 0
+0FEDC 8D 00 20                              sta $2000
+0FEDF 2C 02 20                              bit $2002    ; reset latch
+0FEE2 A9 00                                 lda #$00
+0FEE4 8D 05 20                              sta $2005    ; horizontal scroll = 0
+0FEE7 A9 00                                 lda #0
+0FEE9 8D 05 20                              sta $2005    ; vertical scroll
+0FEEC                                       
+0FEEC 38                                    sec               ; set flag to let main loop run once
+0FEED 66 45                                 ror $45
+0FEEF 68                                    pla               ; pull Y, X, A
+0FEF0 A8                                    tay
+0FEF1 68                                    pla
+0FEF2 AA                                    tax
+0FEF3 68                                    pla
+0FEF4                           
+0FEF4 40                        irq         rti
+0FEF5                           
+0FEF5                           ; --- Interrupt vectors ---------------------------------------------------------------------------
+0FEF5                           
+0FEF5 FF FF FF FF FF FF FF FF..             pad $fffa, $ff
+0FFFA A7 FE 00 F8 F4 FE                     dw nmi, reset, irq  ; note: IRQ unused
+10000                                       pad $10000, $ff
+10000                           
+10000                           ; --- CHR ROM -------------------------------------------------------------------------------------
+10000                           
+10000                                       base $0000
+00000 00 00 00 00 00 00 00 00..             incbin "chr-background.bin"  ; 256 tiles (4 KiB)
+01000                                       pad $1000, $ff
+01000 FF FF FF FF FF FF FF FF..             incbin "chr-sprites.bin"     ; 256 tiles (4 KiB)
+02000                                       pad $2000, $ff
